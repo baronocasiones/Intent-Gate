@@ -1,4 +1,4 @@
-"""Validate fixtures/ against contracts/*.schema.json — CI-style gate (stdlib + jsonschema only)."""
+"""Validate examples and fixtures against contracts/*.schema.json — CI-style gate (stdlib + jsonschema only)."""
 import json
 import sys
 from pathlib import Path
@@ -45,12 +45,15 @@ def main() -> int:
             ok = False
             print(f"FAIL {example_path} ~ {schema_name}: {exc}")
 
+    # Count coverage from the schemas on disk, not from len(PAIRS): a duplicate
+    # entry would otherwise let the gate report coverage it does not have.
+    on_disk = {p.name for p in CONTRACTS.glob("*.schema.json")}
     missing = uncovered_schemas(CONTRACTS, PAIRS)
     if missing:
-        print(f"FAIL {len(missing)} schema(s) with no example: {', '.join(missing)}")
+        print(f"FAIL {len(missing)}/{len(on_disk)} schema(s) with no example: {', '.join(missing)}")
         ok = False
     else:
-        print(f"OK {len(PAIRS)}/{len(PAIRS)} schemas covered")
+        print(f"OK {len(on_disk)}/{len(on_disk)} schemas covered")
 
     return 0 if ok else 1
 

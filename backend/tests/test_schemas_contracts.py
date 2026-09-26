@@ -1,8 +1,10 @@
 """Schemas + contracts — docs/architecture.md §3 (schemas row), §10.
 
 Pydantic models mirror contracts/ (single source). Fixtures are the
-frontend's API (convention 4) — both fixtures must validate against their
-schemas, and the validator script itself is exercised exactly as CI runs it.
+frontend's API (convention 4) — both fixtures and all four examples in
+contracts/examples/ must validate against their schemas, every schema on disk
+must have a pair, and the validator script itself is exercised exactly as CI
+runs it.
 """
 import importlib.util
 import json
@@ -125,6 +127,10 @@ def test_validator_script_exits_zero_as_ci_runs_it():
     assert proc.returncode == 0, f"stdout={proc.stdout}\nstderr={proc.stderr}"
     assert "OK fixtures/demo_run.json" in proc.stdout
     assert "OK fixtures/demo_traceability.json" in proc.stdout
+    # The gate's self-reported coverage must come from the schemas on disk, not
+    # from len(PAIRS) — a duplicate pair entry must not be able to overstate it.
+    n_schemas = len(list(CONTRACTS.glob("*.schema.json")))
+    assert f"OK {n_schemas}/{n_schemas} schemas covered" in proc.stdout
 
 
 # ---------------------------------------------------------------------------

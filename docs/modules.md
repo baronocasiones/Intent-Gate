@@ -39,7 +39,7 @@ break your module (from `docs/test-suite.md`'s coverage map — extend it as you
 
 | ID | Module | Path | Size | Needs | Guard |
 |---|---|---|---|---|---|
-| M1 | Contracts + validator | `contracts/`, `scripts/validate_contracts.py` | S | — | `test_schemas_contracts.py` |
+| M1 | Contracts + validator | `contracts/`, `contracts/examples/`, `scripts/validate_contracts.py` | S | — | `test_schemas_contracts.py` (19 tests) |
 | M2 | Fixtures / demo corpus | `fixtures/` | S | M1 | `test_schemas_contracts.py` |
 | M3 | Pydantic mirrors | `backend/app/models/schemas.py` | S | M1 | `test_schemas_contracts.py` |
 | M4 | Stage 1 Ingest | `backend/app/gates/ingest.py` | M | M2, M11 | `test_gates.py` |
@@ -137,7 +137,7 @@ Sizes: **S** = half a day or less · **M** = about a day · **L** = about two da
 | Schema | Describes | Produced by | Consumed by | Validated today by |
 |---|---|---|---|---|
 | `criterion.schema.json` | one atomic acceptance criterion | M5 | M6, M7 | `contracts/examples/criterion.json` |
-| `verdict.schema.json` | per-criterion verdict + evidence tier | M8 | M9, M15, M16 | via the `run` `$ref` |
+| `verdict.schema.json` | per-criterion verdict + evidence tier | M8 | M9, M15, M16 | `contracts/examples/verdict.json` (also via the `run` `$ref`) |
 | `run.schema.json` | run envelope (id, status, verdicts, measured) | M9, M10 | M15, M16 | `run` vs `demo_run` |
 | `traceability.schema.json` | bidirectional criterion-to-location matrix | M9 | M15, M16 | `traceability` vs `demo_traceability` |
 | `exposure.schema.json` | risk-weighted exposure + per-operator rates | M13 | M15, M16 | `contracts/examples/exposure.json` |
@@ -293,9 +293,10 @@ stay visibly distinct from `0.0`: never render "0% false-certified" before you h
 
 **Purpose:** one authority for every shape that crosses a module boundary.
 **Spec source:** `AGENTS.md` Convention 3 (contracts-first). **Code:**
-`contracts/*.schema.json` (5 files), `scripts/validate_contracts.py` (stdlib +
-`jsonschema` only). **Today:** the validator checks 2 of 5 schema/fixture pairs; `run`
-resolves `verdict` through an explicit `RefResolver` store.
+`contracts/*.schema.json` (6 files), `scripts/validate_contracts.py` (stdlib +
+`jsonschema` only). **Today:** the validator checks all 6 schema/example pairs and fails if
+any schema on disk has none; `run` resolves `verdict` through an explicit `RefResolver`
+store.
 **Target interface:** unchanged CLI — `python scripts/validate_contracts.py`, exit 0 or 1.
 
 **Acceptance criteria**
@@ -308,8 +309,10 @@ resolves `verdict` through an explicit `RefResolver` store.
       `LOGIC_TRACE`, `STATE_CHECK`, `ERROR_PATH`, `ABSENCE_CHECK`) are settled and pinned
       by `test_findings_probe_enum_is_the_five_named_probes`.
 - [ ] `test_schemas_contracts.py` passes; validator green in CI.
-- [ ] Schemas stay draft-07. Do **not** loosen `additionalProperties` globally — extra
-      keys are tolerated by omission, not by opening the schema.
+- [x] Schemas stay draft-07. Do **not** loosen `additionalProperties` globally — extra
+      keys are tolerated by omission, not by opening the schema. Verified across all 6
+      schemas: each declares draft-07 and none declares `additionalProperties`. Standing
+      rule, not a one-off — re-check whenever a schema is added.
 
 **Deferred deliberately (hardening pass — not this session):**
 - No `$id` added — not needed to validate examples; add when referencing cross-schema
@@ -977,8 +980,52 @@ record that you did.
   a standalone example). The coverage check in `main()` caught it. A 6th PAIRS entry and
   `contracts/examples/verdict.json` were added. The §1.1 catalogue already noted "via the
   `run` `$ref`" — that indirect validation is now supplemented by a direct example.
+- **Delivery:** two branches, deliberately. `m1-contracts` carries bobIDE's commit
+  `b0c224c` **plus** the review pass committed on top, and is the **only** branch that
+  gets a PR into `main`. `bob-sessions` points at `b0c224c` alone — the pristine agent
+  output before any human correction — and is pushed as an **archive ref, deliberately
+  not PR'd**: a PR from it would carry the same five contract files as `m1-contracts`
+  and the second one to merge would be empty or conflict. Keeping it unmerged is what
+  makes the review pass auditable as a *correction* of an agent's output rather than
+  as the only version that ever existed. `bob-sessions/` at the repo root holds the
+  tool's own session summary, two screenshots, 243 KB total:
+  `Screenshot_20260927_065255.png` (branch/baseline, new files, what each is for) and
+  `Screenshot_20260927_065340.png` (key code changes, the 10 new tests, and the
+  `verdict.schema.json` orphan discovery). **Every claim in both was checked against
+  the code and holds** — which is why they are worth keeping. They document `b0c224c`,
+  *not* the review pass on top; that gap is the point of the archive. PR number to be
+  recorded here once opened. **Neither branch pushed at the time of writing** — record
+  the real state here, don't let this line drift.
 - **What was deliberately not done:** no `$id`, no `criterion_id` pattern, no
   `measured:false ⇒ null` constraint, no `by_operator` shape, no `CERTIFIED ⇒ E4`
   constraint (all D1 or hardening-pass), no `additionalProperties: false` (AC4). D1 was
   not ratified. The `FIXTURES` constant in the validator was removed (now unused) — stated
   in the commit.
+- **Review pass, same session — ten corrections, no behaviour change to product code.** A
+  read-back of the session's own output against the code found statements the change had
+  invalidated and left in place. Corrected: `modules.md` M1 header ("5 files", "2 of 5
+  pairs"), `modules.md` §1.1's `verdict` row (still "via the `run` `$ref`" only), the
+  unticked draft-07 criterion, `architecture.md` §10 and its Session 18 log (both said 5
+  pairs where `PAIRS` has 6 — the as-built authority was contradicting its own log),
+  `test-suite.md`'s coverage map (5 pairs), `intent-attestation-gate.md`'s layout line
+  (5 schemas, no examples), and the module docstrings of `validate_contracts.py` and
+  `test_schemas_contracts.py`, which still described a fixtures-only world.
+- **One code defect came out of the same pass:** the coverage line printed
+  `len(PAIRS)/len(PAIRS)` rather than the schemas on disk, so a duplicate pair entry would
+  have let the gate claim coverage it did not have. Now counted from disk, with
+  `test_validator_script_exits_zero_as_ci_runs_it` pinning the reported number against the
+  on-disk schema count. The gate that exists to make an unmeasured thing look unmeasured
+  was itself reporting a number it had not measured.
+- **Owed, not done: Figure 6 is now stale and no one can regenerate it.** The Contracts (M1)
+  box still reads "5 JSON Schemas" / "validator covers 2 of 5 pairs" and the Exposure (M9)
+  box still reads "exposure schema has no PAIRS entry" — all three now false. The generator
+  `gen_fig6_architecture.py` is not committed on any branch, so the figure is unregeneratable
+  and must not be hand-edited. Recorded as `docs/architecture.md` §11 gap 11. **Any module
+  that changes a number the figure prints owes the same audit** — the figure asserts ~38 box
+  lines against the code, and a count that moves in code but not in the PNG is a lie with a
+  legend.
+- **Correction to this log's own framing, same day:** the instruction this session worked
+  from specified **5 pairs for 6 schemas**, leaving `verdict.schema.json` still an orphan
+  under the rule it was creating. The coverage check caught it — which is the check
+  working, not a near-miss. Recorded here because the mistake was in the specification, and
+  the log should not read as though the first pass got it right.

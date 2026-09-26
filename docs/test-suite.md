@@ -40,7 +40,7 @@ backend/tests/
 ```bash
 # from the repo root (CI runs exactly this):
 pytest                                  # uses pyproject testpaths → backend/tests
-python scripts/validate_contracts.py    # contracts ↔ fixtures gate (exit non-zero on fail)
+python scripts/validate_contracts.py    # contracts ↔ examples + fixtures gate (exit non-zero on fail)
 ```
 
 No setup beyond `pip install -r backend/requirements.txt`. The suite never
@@ -57,7 +57,7 @@ needs network access, a database file, or watsonx.ai credentials.
 | §7 | LLM dual-mode + spend discipline | `test_llm.py` |
 | §8 | read-only attestor (the differentiator) | `test_policy.py` |
 | §9 | false-certified-rate metric (the "THE NUMBER") | `test_metric.py` |
-| §10 | contracts (6 schemas), fixtures (2), validator (5 pairs + coverage check) | `test_schemas_contracts.py` |
+| §10 | contracts (6 schemas), fixtures (2), validator (6 pairs + coverage check) | `test_schemas_contracts.py` |
 | §11 | honest gaps — characterized, not hidden | `test_pipeline.py` (queue), `test_llm.py` (spike pending) |
 
 Figure 6 (`docs/Figure-6-System-Architecture.png`) is the visual cross-check:
@@ -169,13 +169,22 @@ on 3.11.9 and on 3.12.14, validator OK ×2 on both.
     `test_fixture_verdicts_satisfy_verdict_contract`: direct `FIXTURES` references updated
     to `ROOT / "fixtures" / ...`.
   - `test_validator_script_exits_zero_as_ci_runs_it`: two stdout assertions updated to
-    `"OK fixtures/demo_run.json"` and `"OK fixtures/demo_traceability.json"`.
+    `"OK fixtures/demo_run.json"` and `"OK fixtures/demo_traceability.json"`, plus a third
+    assertion added in the review pass below (the reported coverage count).
 - **Discrepancy from stated expectations:** instructions specified 5 PAIRS entries, but
   `verdict.schema.json` is an existing schema on disk with no PAIRS entry (previously
   validated only via `run`'s `$ref`, not directly). The coverage check correctly identified
   it as an orphan. A 6th entry was added (`verdict.schema.json` ↔ `contracts/examples/verdict.json`),
   making PAIRS 6 entries and the count "OK 6/6 schemas covered". This is the intended
   behaviour of the coverage check: it caught a pre-existing gap.
+- **Review pass, same session — one code defect, one guard, test count unchanged.** The
+  validator's coverage line printed `len(PAIRS)/len(PAIRS)`, so a duplicate pair entry would
+  have let the gate report coverage it did not have: a self-reported number not derived from
+  what it claims to measure, in the one component whose entire job is that honesty. It now
+  counts the schemas on disk. `test_validator_script_exits_zero_as_ci_runs_it` pins the
+  reported number against the on-disk schema count, reusing the same subprocess rather than
+  paying for a second one, so the regression cannot return. This adds an **assertion, not a
+  test** — the count stays **89**, so the status header above is unaffected.
 - **Verification:** `89 passed` on Python 3.14.7, isolated `/tmp/opencode/venv`,
   `PYTHONDONTWRITEBYTECODE=1 -p no:cacheprovider`. Validator: 6 OK lines + "OK 6/6
   schemas covered", exit 0. `git status --porcelain` shows only §2 files.
