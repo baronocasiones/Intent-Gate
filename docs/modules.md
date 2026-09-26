@@ -4,9 +4,8 @@ Per-module briefs that let **5 people + AI agents build this concurrently withou
 colliding**. Every module states: purpose, spec source, current stub I/O, target
 interface, dependencies, acceptance criteria, size, and a worked input→output example.
 
-Status: **created 2026-09-27** against `main` @ `6dda165`; **extended 2026-09-27 with
-M19 (receipt renderer)** against `main` @ `8be9a94` (post PR #25 merge, tree clean).
-Scope: 19 implementable units — M1–M18 scaffold plus M19. This is the *fourth* doc in the set:
+Status: **created 2026-09-27** against `main` @ `6dda165`.
+Scope: **18 implementable units** — the M1–M18 plan below, unchanged. This is the *fourth* doc in the set:
 
 | File | Answers | Audience |
 |---|---|---|
@@ -58,7 +57,13 @@ break your module (from `docs/test-suite.md`'s coverage map — extend it as you
 | M16 | Dashboard | `frontend/` | M | M2, M15 | none (gap — M17 adds) |
 | M17 | Test suite + CI | `backend/tests/`, `pyproject.toml`, `.github/` | S | all | — |
 | M18 | Demo runbook + env | `backend/.env.example` + runbook below | S | M11, M15 | `test_config.py` |
-| M19 | Receipt renderer | `backend/app/receipt/` | S | M9, M14 | `test_receipt.py` |
+
+> **Out-of-band addition, not part of this plan.** The **receipt renderer**
+> (`backend/app/receipt/`, guard `test_receipt.py`) was built on 2026-09-27 and is
+> documented in §5. It carries **no M-number**: it is in no build wave, holds no
+> critical-path position, and was not one of the 18 scaffold units. It is tracked
+> as a decision (**D14**) rather than as a numbered module, so the wave ordering
+> and the critical path above stay meaningful. Do not renumber this plan to admit it.
 
 Sizes: **S** = half a day or less · **M** = about a day · **L** = about two days ·
 **XL** = split it (see M7).
@@ -781,7 +786,7 @@ failed live call. **Code:** `backend/.env.example`; the runbook lives in this se
 
 **Size:** S. **Needs:** M11, M15.
 
-### M19 — Receipt renderer (added 2026-09-27, implemented same session)
+### Receipt renderer — out-of-band addition (built 2026-09-27, no M-number)
 
 **Purpose:** render a signed run artefact as a document an auditor accepts — a
 single self-contained page carrying the verdict, the evidence ladder, the
@@ -875,7 +880,7 @@ record that you did.
 | **D11** | Per-run token/cost ceiling | M7, M11 | Hard cap per criterion group; report spend per run |
 | **D12** | M7 demo scope if the clock slips | M7, M18 | 1 criterion group, 2 probes, mock-first |
 | **D13** | GitHub write-back (comment + check run) | M15 | Stretch — after the API serves real data |
-| **D14** | What a "receipt" is — the figure shows a surface §3.4 never defines | M19, M9, M15 | Human-readable rendering of the signed artefact; JSON stays canonical, HTML is regenerable. Implemented; awaiting M9 to feed it |
+| **D14** | What a "receipt" is — the figure shows a surface §3.4 never defines | M9, M15, M16 | Human-readable rendering of the signed artefact; JSON stays canonical, HTML is regenerable. Implemented; awaiting M9 to feed it |
 
 ---
 
@@ -922,7 +927,7 @@ record that you did.
   Wave 0 starts, since D1 (evidence ladder) blocks M7/M8/M9 and D6 (read-only enforcement
   point) is a one-line change that turns the differentiator from a claim into a control.
 
-### 2026-09-27 — Session 15: M19 receipt renderer designed, built, and verified
+### 2026-09-27 — Session 15: receipt renderer designed, built, and verified (out-of-band)
 - `/start` instruction: "creating a receipt renderer module". `/start` protocol ran; no local
   `AGENTS.md` existed (the `6dda165 repo cleanup` removed it), so session state came from the
   `architecture.md` / `modules.md` logs. No receipt doc existed — reported, and the module
@@ -963,8 +968,8 @@ record that you did.
 - **Not done, deliberately:** `GET /api/runs/{id}/receipt`. `routers/runs.py` is M15's
   exclusive path (rule 2), so it stays a request — and is better held until M9 emits real
   artefacts.
-- **Delivery (corrected after this log was first written):** M19 is committed on branch
-  `m19-receipt-renderer`, forked from `main` @ `8be9a94` — `dc60c89` (code + guard) and `1ba3729`
+- **Delivery (corrected after this log was first written):** the receipt renderer is committed on
+  branch `receipt-renderer`, forked from `main` @ `8be9a94` — `dc60c89` (code + guard) and `1ba3729`
   (docs), plus a third commit correcting these session logs, all authored
   `Cody <230651661+Cody-me@users.noreply.github.com>` with identity set repository-local only
   (`~/.gitconfig` untouched). **The push is still outstanding** — the non-interactive environment has
@@ -975,7 +980,7 @@ record that you did.
   commit, and flagged there as a contradiction worth resolving), and the commit identity is a
   contributor's noreply address rather than the repo owner's, since attributing this work to the
   owner would have been impersonation.
-- **New conventions established (M19):** the artefact is the record and the receipt is only a
+- **New conventions established (receipt renderer):** the artefact is the record and the receipt is only a
   rendering; signed-ness is derived by recomputation and never asserted; a renderer degrades to
   an explicit named gap rather than an empty table or a raised error; every value reaching the
   document is escaped because locations and rationales are untrusted text.

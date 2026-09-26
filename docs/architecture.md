@@ -133,7 +133,7 @@ wired yet.
 6. §2 `_dist` path defect (three-level climb, should be two).
 7. Missing vs spec: GitHub write-back (comments + check runs), review-debt ledger, risk-weighted exposure decay curve, signed cross-file hash chain, SSE/polling, auth, real demo-repo target.
 8. Dependencies pinned in `backend/requirements.txt`: fastapi 0.135.3, uvicorn 0.44.0, pydantic 2.13.0, httpx 0.28.1, jsonschema 4.26.0, pytest 9.0.3, pytest-asyncio 1.4.0. Smoke tests in `backend/tests/test_scaffold.py` (pipeline stub path, policy guard, metric-empty) are the only coverage.
-9. **Receipt renderer (M19) is implemented but unwired.** `render()` / `write_receipt()` exist and are tested, but no pipeline stage calls them and there is no `GET /api/runs/{id}/receipt` route. Until M9 emits a real artefact the renderer has no input in production. This is a *consumer* gap, not an implementation gap.
+9. **Receipt renderer is implemented but unwired.** `render()` / `write_receipt()` exist and are tested, but no pipeline stage calls them and there is no `GET /api/runs/{id}/receipt` route. Until M9 emits a real artefact the renderer has no input in production. This is a *consumer* gap, not an implementation gap.
 
 ## 12. Monorepo layout (as on disk)
 
@@ -197,8 +197,9 @@ frontend/{index.html,package.json,vite.config.js}
 - §11 is unchanged — all gaps remain open. `modules.md` assigns each one an owner module
   (M1, M2, M10, M13, M15, M16, M17) rather than closing any.
 
-### 2026-09-27 — Session 15: receipt renderer (M19) added — first non-stub module
-- **This file is updated because real code landed, not documentation.** M19 (`backend/app/receipt/`)
+### 2026-09-27 — Session 15: receipt renderer added — first non-stub module
+- **This file is updated because real code landed, not documentation.** The receipt renderer
+  (`backend/app/receipt/`)
   is the first module in the project that is not a shape-correct stub: `render()` is a pure,
   deterministic HTML renderer for a signed run artefact, and `write_receipt()` writes it to
   `{ARTIFACT_DIR}/{run_id}.receipt.html`. §3's component table and §12's layout now list it.
@@ -222,8 +223,8 @@ frontend/{index.html,package.json,vite.config.js}
   lost, and `origin/baron` is an ancestor of `main`. This checkout is a *fresh clone* (reflog has
   only a clone and one fast-forward), not the copy Session 14 ended in — worth knowing, since
   Session 14's local `baron` branch does not exist here.
-- **Delivery, corrected after this log was first written:** M19 is committed on branch
-  `m19-receipt-renderer` (`dc60c89` code + guard, `1ba3729` docs, then a third commit correcting
+- **Delivery, corrected after this log was first written:** the receipt renderer is committed on branch
+  `receipt-renderer` (`dc60c89` code + guard, `1ba3729` docs, then a third commit correcting
   these logs), based on `main` @ `8be9a94`, authored
   `Cody <230651661+Cody-me@users.noreply.github.com>`. **Not yet pushed** —
   no credential helper in this environment and no `gh`, so no PR exists. Write access for that account

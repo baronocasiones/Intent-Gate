@@ -4,7 +4,7 @@ Append-only module record for the project's test suite. Architecture context
 lives in `docs/architecture.md` (code-faithful) and `docs/intent-attestation-gate.md`
 (concept); this file records only how the suite is organized, run, and extended.
 
-Status: **scaffold + architecture-derived unit tests + M19 receipt guard** — 116
+Status: **scaffold + architecture-derived unit tests + receipt-renderer guard** — 116
 tests (79 pre-existing + 37 receipt). Last verified 2026-09-27: **116 passed** on
 Python **3.14.7**. The 79-test baseline remains green on 3.11.9 and 3.12.14, but
 the 37 receipt cases have **not** yet run on the CI matrix — see the session log.
@@ -27,7 +27,7 @@ backend/tests/
   test_api.py                      §5 route table + health/webhook/stub endpoint shapes
   test_store_db.py                 §6 WAL mode, runs table, sha256-of-sorted-body artifacts
   test_config.py                   §3 env defaults/overrides, MOCK_LLM parsing, reload-restore
-  test_receipt.py                  M19 receipt renderer: determinism, digest round-trip against
+  test_receipt.py                  receipt renderer: determinism, digest round-trip against
                                    write_artifact, six honesty rules, tamper detection,
                                    no-network, no-llm-import, self-containment, escaping
 ```
@@ -56,7 +56,7 @@ needs network access, a database file, or watsonx.ai credentials.
 | §9 | false-certified-rate metric (the "THE NUMBER") | `test_metric.py` |
 | §10 | contracts, fixtures, validator | `test_schemas_contracts.py` |
 | §11 | honest gaps — characterized, not hidden | `test_pipeline.py` (queue), `test_llm.py` (spike pending) |
-| §3 (M19) | receipt renderer — determinism, digest integrity, honesty rules | `test_receipt.py` |
+| §3 (receipt renderer) | receipt renderer — determinism, digest integrity, honesty rules | `test_receipt.py` |
 
 Figure 6 (`docs/Figure-6-System-Architecture.png`) is the visual cross-check:
 the attestor box ↔ `test_policy.py`, the metering note ↔ `test_llm.py` /
@@ -148,7 +148,7 @@ on 3.11.9 and on 3.12.14, validator OK ×2 on both.
   product's own `scripts/validate_contracts.py` (same API) — left visible as
   debt, not suppressed.
 
-### 2026-09-27 — Session 15: M19 receipt guard added (37 cases, 79 → 116)
+### 2026-09-27 — Session 15: receipt guard added (37 cases, 79 → 116)
 - Added `backend/tests/test_receipt.py` — 33 functions: 31 original (one of them
   parametrized 5 ways, so 35 cases) plus 2 regression tests added mid-session =
   **37 collected, 37 passed**. No pre-existing test was modified; the 79 remain green.
