@@ -4,8 +4,12 @@ Append-only module record for the project's test suite. Architecture context
 lives in `docs/architecture.md` (code-faithful) and `docs/intent-attestation-gate.md`
 (concept); this file records only how the suite is organized, run, and extended.
 
-Status: **scaffold + architecture-derived unit tests** — 79 tests, green on
-Python 3.11.9 and 3.12.14, wired into GitHub Actions. Last verified: 2026-09-27.
+Status: **scaffold + architecture-derived unit tests + M1 contracts guard** — 89 tests
+(79 pre-existing + 10 new in `test_schemas_contracts.py`). Last verified 2026-09-27 on
+Python **3.14.7** (isolated `/tmp/opencode/venv`, `PYTHONDONTWRITEBYTECODE=1 -p no:cacheprovider`).
+The 79-test baseline is green on 3.11.9 and 3.12.14 per Session 13 and Session 17 records.
+**3.14.7 is not the CI matrix (3.11 + 3.12) — one CI run is owed** for this session's 10
+new tests before they are trusted on the matrix.
 
 ## Layout
 
@@ -21,7 +25,11 @@ backend/tests/
   test_policy.py                   §8 attestor GRANTS/DENIES exact sets, fail-closed both ways
   test_metric.py                   §9 seven operators, rate math, exposure-schema conformance
   test_llm.py                      §7 mock determinism; watsonx fails loud; zero-network proof
-  test_schemas_contracts.py        §10 pydantic↔contract parity, fixture validation, validator wrap
+  test_schemas_contracts.py        §10 pydantic↔contract parity, fixture validation, validator wrap;
+                                   coverage check (every schema paired), example validation
+                                   (verdict, criterion, exposure, findings), probe-enum pin,
+                                   uncovered_schemas unit tests (2), result-unenumerated +
+                                   tier-not-required pin
   test_api.py                      §5 route table + health/webhook/stub endpoint shapes
   test_store_db.py                 §6 WAL mode, runs table, sha256-of-sorted-body artifacts
   test_config.py                   §3 env defaults/overrides, MOCK_LLM parsing, reload-restore
@@ -32,7 +40,7 @@ backend/tests/
 ```bash
 # from the repo root (CI runs exactly this):
 pytest                                  # uses pyproject testpaths → backend/tests
-python scripts/validate_contracts.py    # contracts ↔ fixtures gate (exit non-zero on fail)
+python scripts/validate_contracts.py    # contracts ↔ examples + fixtures gate (exit non-zero on fail)
 ```
 
 No setup beyond `pip install -r backend/requirements.txt`. The suite never
@@ -49,7 +57,7 @@ needs network access, a database file, or watsonx.ai credentials.
 | §7 | LLM dual-mode + spend discipline | `test_llm.py` |
 | §8 | read-only attestor (the differentiator) | `test_policy.py` |
 | §9 | false-certified-rate metric (the "THE NUMBER") | `test_metric.py` |
-| §10 | contracts, fixtures, validator | `test_schemas_contracts.py` |
+| §10 | contracts (6 schemas), fixtures (2), validator (6 pairs + coverage check) | `test_schemas_contracts.py` |
 | §11 | honest gaps — characterized, not hidden | `test_pipeline.py` (queue), `test_llm.py` (spike pending) |
 
 Figure 6 (`docs/Figure-6-System-Architecture.png`) is the visual cross-check:
@@ -128,3 +136,56 @@ on 3.11.9 and on 3.12.14, validator OK ×2 on both.
 - Note: `jsonschema.RefResolver` deprecation warnings are shared with the
   product's own `scripts/validate_contracts.py` (same API) — left visible as
   debt, not suppressed.
+
+### 2026-09-27 — Session 18: M1 contracts guard — 10 new tests (79 → 89)
+
+- Added 10 tests to `backend/tests/test_schemas_contracts.py` (append only; no existing
+  test deleted or weakened):
+  - `test_every_contract_schema_has_a_pair` — loads `PAIRS` from `validate_contracts.py`
+    via `importlib.util.spec_from_file_location` and asserts coverage equals every
+    `.schema.json` on disk (Convention 7: asserts against the real producer).
+  - `test_criterion_example_validates` — via `_validate_pair`.
+  - `test_exposure_example_validates` — via `_validate_pair`.
+  - `test_findings_example_validates` — via `_validate_pair`.
+  - `test_exposure_example_is_the_unmeasured_state` — pins Convention 8 at the contract
+    layer: `measured=False`, `null` rate, empty `by_operator`.
+  - `test_findings_probe_enum_is_the_five_named_probes` — `FIVE_PROBES` module-level
+    literal asserted against the schema's probe enum; parallels `SEVEN_CLASSES` in
+    `test_metric.py`.
+  - `test_uncovered_schemas_reports_a_missing_pair(tmp_path)` — unit test for
+    `uncovered_schemas()` with a synthetic dir under `tmp_path`.
+  - `test_uncovered_schemas_is_empty_when_all_covered(tmp_path)` — same setup, all paired.
+  - `test_findings_result_is_unenumerated_and_tier_is_not_required` — pins two
+    non-decisions: `result` stays unenumerated (M7's vocabulary), `evidence_tier` stays
+    absent from required/properties (D1's call).
+  - `test_verdict_example_validates` — via `_validate_pair` (added when the coverage check
+    revealed `verdict.schema.json` was an existing orphan — see §5 below).
+- **Declared changes to existing lines (Convention 10):**
+  - `_validate_pair` helper: `(FIXTURES / fixture_name)` → `(ROOT / fixture_name)`;
+    `FIXTURES` constant removed. Both existing call sites (`test_demo_run_fixture_validates_against_run_contract`,
+    `test_demo_traceability_fixture_validates`) retained their string args, updated to
+    `"fixtures/demo_run.json"` and `"fixtures/demo_traceability.json"`.
+  - `test_pydantic_run_record_accepts_demo_fixture` and
+    `test_fixture_verdicts_satisfy_verdict_contract`: direct `FIXTURES` references updated
+    to `ROOT / "fixtures" / ...`.
+  - `test_validator_script_exits_zero_as_ci_runs_it`: two stdout assertions updated to
+    `"OK fixtures/demo_run.json"` and `"OK fixtures/demo_traceability.json"`, plus a third
+    assertion added in the review pass below (the reported coverage count).
+- **Discrepancy from stated expectations:** instructions specified 5 PAIRS entries, but
+  `verdict.schema.json` is an existing schema on disk with no PAIRS entry (previously
+  validated only via `run`'s `$ref`, not directly). The coverage check correctly identified
+  it as an orphan. A 6th entry was added (`verdict.schema.json` ↔ `contracts/examples/verdict.json`),
+  making PAIRS 6 entries and the count "OK 6/6 schemas covered". This is the intended
+  behaviour of the coverage check: it caught a pre-existing gap.
+- **Review pass, same session — one code defect, one guard, test count unchanged.** The
+  validator's coverage line printed `len(PAIRS)/len(PAIRS)`, so a duplicate pair entry would
+  have let the gate report coverage it did not have: a self-reported number not derived from
+  what it claims to measure, in the one component whose entire job is that honesty. It now
+  counts the schemas on disk. `test_validator_script_exits_zero_as_ci_runs_it` pins the
+  reported number against the on-disk schema count, reusing the same subprocess rather than
+  paying for a second one, so the regression cannot return. This adds an **assertion, not a
+  test** — the count stays **89**, so the status header above is unaffected.
+- **Verification:** `89 passed` on Python 3.14.7, isolated `/tmp/opencode/venv`,
+  `PYTHONDONTWRITEBYTECODE=1 -p no:cacheprovider`. Validator: 6 OK lines + "OK 6/6
+  schemas covered", exit 0. `git status --porcelain` shows only §2 files.
+  3.14 is not the CI matrix — one CI run owed.
