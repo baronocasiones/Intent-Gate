@@ -1,0 +1,12 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "RunRecord",
+  "type": "object",
+  "required": ["run_id", "status", "verdicts", "measured"],
+  "properties": {
+    "run_id": { "type": "string" },
+    "status": { "type": "string" },
+    "measured": { "type": "boolean" },
+    "verdicts": { "type": "array", "items": { "$ref": "verdict.schema.json" } }
+  }
+}
