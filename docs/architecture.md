@@ -67,6 +67,7 @@ at `/` **only if that directory exists** (API-first otherwise).
 | Schemas | `backend/app/models/schemas.py` — `CriterionVerdict`, `RunRecord`, `Verdict`, `EvidenceTier` literals | pydantic v2; verdicts carry `criterion_id, verdict, evidence_tier, locations[], rationale`; `measured: bool` on runs |
 | Persistence — index | `backend/app/db.py` — `get_db()` + `SCHEMA` | SQLite, `PRAGMA journal_mode=WAL`, one table `runs(id, status, created_at, artifact_path)`. No caller yet |
 | Persistence — artifacts | `backend/app/store/artifacts.py::write_artifact(run_id, payload)` | writes `$ARTIFACT_DIR/{run_id}.json` as `{"sha256": <of sorted body>, **payload}`; `makedirs` on demand. No caller yet |
+| Receipt renderer | `backend/app/receipt/render.py::render(artifact)` + `store.py::write_receipt(run_id, artifact)` | **real, not a stub.** Pure deterministic HTML rendering of a signed artefact to `{ARTIFACT_DIR}/{run_id}.receipt.html`; self-contained (inline CSS, no script, no network), recomputes and reports the artefact digest rather than hashing its own bytes. Derives signed-ness; names absent artefacts; `measured: false` never renders a number. Not served over HTTP — no route yet |
 | Config | `backend/app/config.py` + `backend/.env.example` | env-driven: `WATSONX_API_KEY/PROJECT_ID/URL` (default `https://us-south.ml.cloud.ibm.com`), `DATABASE_URL` (`sqlite:///./attestation.db`), `MOCK_LLM` (`"true"` → mock), `ARTIFACT_DIR` (`./artifacts`). Secrets never committed (`.gitignore` covers `.env`) |
 
 ## 4. Data flow (as coded)
@@ -132,6 +133,7 @@ wired yet.
 6. §2 `_dist` path defect (three-level climb, should be two).
 7. Missing vs spec: GitHub write-back (comments + check runs), review-debt ledger, risk-weighted exposure decay curve, signed cross-file hash chain, SSE/polling, auth, real demo-repo target.
 8. Dependencies pinned in `backend/requirements.txt`: fastapi 0.135.3, uvicorn 0.44.0, pydantic 2.13.0, httpx 0.28.1, jsonschema 4.26.0, pytest 9.0.3, pytest-asyncio 1.4.0. Smoke tests in `backend/tests/test_scaffold.py` (pipeline stub path, policy guard, metric-empty) are the only coverage.
+9. **Receipt renderer (M19) is implemented but unwired.** `render()` / `write_receipt()` exist and are tested, but no pipeline stage calls them and there is no `GET /api/runs/{id}/receipt` route. Until M9 emits a real artefact the renderer has no input in production. This is a *consumer* gap, not an implementation gap.
 
 ## 12. Monorepo layout (as on disk)
 
@@ -152,6 +154,7 @@ backend/app/attestor/policy.py
 backend/app/metrics/false_certified.py
 backend/app/models/schemas.py
 backend/app/store/artifacts.py
+backend/app/receipt/{render,store}.py
 backend/tests/test_scaffold.py
 contracts/*.schema.json  fixtures/demo_*.json  scripts/validate_contracts.py
 frontend/src/{App.jsx,main.jsx,api.js,fixtures.js,components/*}
@@ -193,3 +196,29 @@ frontend/{index.html,package.json,vite.config.js}
   been run, which is why the §2 `_dist` defect is unexercised.
 - §11 is unchanged — all gaps remain open. `modules.md` assigns each one an owner module
   (M1, M2, M10, M13, M15, M16, M17) rather than closing any.
+
+### 2026-09-27 — Session 15: receipt renderer (M19) added — first non-stub module
+- **This file is updated because real code landed, not documentation.** M19 (`backend/app/receipt/`)
+  is the first module in the project that is not a shape-correct stub: `render()` is a pure,
+  deterministic HTML renderer for a signed run artefact, and `write_receipt()` writes it to
+  `{ARTIFACT_DIR}/{run_id}.receipt.html`. §3's component table and §12's layout now list it.
+- **Design invariant worth knowing before changing this code:** the JSON artefact is signed, the
+  HTML is only a rendering. `render()` never hashes its own bytes — it recomputes the digest over
+  the canonical body exactly as §6's `write_artifact` does, and reports what it finds. A missing
+  digest renders "unsigned"; a mismatched one renders the mismatch. `write_receipt()` deliberately
+  reads the **stored** `{run_id}.json` rather than recomputing, so a tampered artefact cannot
+  re-verify itself — this was a real bug in the first implementation, caught by the guard.
+- No contract, no new dependency, no endpoint, and no existing module touched. `requirements.txt`
+  is unchanged at its 7 pins. §11 gains item 9: the renderer is implemented but unwired.
+- **Not served over HTTP.** `GET /api/runs/{id}/receipt` is intentionally absent — `runs.py` is
+  M15's exclusive path per `modules.md` rule 2, so it is raised as a request, and is better held
+  until M9 emits real artefacts (a receipt served today would read almost entirely "not emitted").
+- **Verification:** 37 new guard cases; full suite **116 passed**, validator OK, on Python 3.14.7
+  in an isolated `/tmp/opencode/venv`. Repo byte-identical (85 files hashed before/after).
+  3.14 is *not* the CI matrix (3.11 + 3.12) — one CI run is still owed. Full detail in
+  `docs/modules.md` §7 Session 15; guard detail in `docs/test-suite.md`.
+- **Repo state corrected against Session 14's record:** `ac7a6da` did land, via
+  `8be9a94 Merge pull request #25 from baronocasiones/baron` → `63e624c` → `ac7a6da`. Nothing was
+  lost, and `origin/baron` is an ancestor of `main`. This checkout is a *fresh clone* (reflog has
+  only a clone and one fast-forward), not the copy Session 14 ended in — worth knowing, since
+  Session 14's local `baron` branch does not exist here. M19 remains untracked and uncommitted.

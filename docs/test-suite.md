@@ -4,8 +4,10 @@ Append-only module record for the project's test suite. Architecture context
 lives in `docs/architecture.md` (code-faithful) and `docs/intent-attestation-gate.md`
 (concept); this file records only how the suite is organized, run, and extended.
 
-Status: **scaffold + architecture-derived unit tests** — 79 tests, green on
-Python 3.11.9 and 3.12.14, wired into GitHub Actions. Last verified: 2026-09-27.
+Status: **scaffold + architecture-derived unit tests + M19 receipt guard** — 116
+tests (79 pre-existing + 37 receipt). Last verified 2026-09-27: **116 passed** on
+Python **3.14.7**. The 79-test baseline remains green on 3.11.9 and 3.12.14, but
+the 37 receipt cases have **not** yet run on the CI matrix — see the session log.
 
 ## Layout
 
@@ -25,6 +27,9 @@ backend/tests/
   test_api.py                      §5 route table + health/webhook/stub endpoint shapes
   test_store_db.py                 §6 WAL mode, runs table, sha256-of-sorted-body artifacts
   test_config.py                   §3 env defaults/overrides, MOCK_LLM parsing, reload-restore
+  test_receipt.py                  M19 receipt renderer: determinism, digest round-trip against
+                                   write_artifact, six honesty rules, tamper detection,
+                                   no-network, no-llm-import, self-containment, escaping
 ```
 
 ## How to run
@@ -51,6 +56,7 @@ needs network access, a database file, or watsonx.ai credentials.
 | §9 | false-certified-rate metric (the "THE NUMBER") | `test_metric.py` |
 | §10 | contracts, fixtures, validator | `test_schemas_contracts.py` |
 | §11 | honest gaps — characterized, not hidden | `test_pipeline.py` (queue), `test_llm.py` (spike pending) |
+| §3 (M19) | receipt renderer — determinism, digest integrity, honesty rules | `test_receipt.py` |
 
 Figure 6 (`docs/Figure-6-System-Architecture.png`) is the visual cross-check:
 the attestor box ↔ `test_policy.py`, the metering note ↔ `test_llm.py` /
@@ -80,6 +86,19 @@ the attestor box ↔ `test_policy.py`, the metering note ↔ `test_llm.py` /
 6. **No product code changes to make tests pass.** A failing test is first
    interrogated: test bug → fix test; real defect → report (§11 style), don't
    patch product code from the test session.
+7. **Assert against the real producer, not a re-implementation.** Where a
+   contract exists between two modules, the guard must pin the *actual*
+   function's output. `test_receipt.py` round-trips through `write_artifact`
+   rather than recomputing the digest itself, so a change to the hashing
+   computation cannot pass by both sides drifting the same way.
+8. **Content assertions skip the stylesheet.** A whole-document grep for a
+   rendered string will collide with the renderer's own CSS (`width: 100%`
+   contains `0%`). `test_receipt.py` exposes a `_content()` helper that strips
+   the `<style>` block; use the equivalent wherever a renderer emits styles.
+9. **Gap wording is a named constant.** Absent/unsigned/unmeasured states are
+   asserted against exported constants (`GAP`, `UNSIGNED`, `UNMEASURED`), never
+   against incidental markup — so rewording a document does not fail the suite
+   while *removing* a claim does.
 
 ## Known gaps (not covered yet)
 
@@ -128,3 +147,38 @@ on 3.11.9 and on 3.12.14, validator OK ×2 on both.
 - Note: `jsonschema.RefResolver` deprecation warnings are shared with the
   product's own `scripts/validate_contracts.py` (same API) — left visible as
   debt, not suppressed.
+
+### 2026-09-27 — Session 15: M19 receipt guard added (37 cases, 79 → 116)
+- Added `backend/tests/test_receipt.py` — 33 functions: 31 original (one of them
+  parametrized 5 ways, so 35 cases) plus 2 regression tests added mid-session =
+  **37 collected, 37 passed**. No pre-existing test was modified; the 79 remain green.
+- **Coverage:** determinism and key-order independence; the digest round-trip
+  asserted against `write_artifact` itself (Convention 7); unsigned / mismatched
+  / tampered digest states; the six honesty rules (`measured: false` never a
+  number, absent artefacts named, `PENDING` styled as undecided, ladder marked
+  provisional, chain state stated, attestor policy visible); self-containment
+  (no `http(s)://`, no `<script>`); no-network via the `test_llm.py` send spy;
+  no-llm-import via an `ast` walk; escaping of untrusted text; `tmp_path`
+  discipline; malformed and hostile artefact shapes.
+- **Two failures, both caught by running the suite — neither by reasoning:**
+  - *Test bug.* `assert "0%" not in out` grepped the whole document and matched
+    the renderer's own `width: 100%`. Fixed via a `_content()` helper stripping
+    the `<style>` block; recorded as Convention 8.
+  - *Real product defect.* `write_receipt` was handed the pre-digest payload, so
+    the receipt rendered **"unsigned" for an artefact that was signed on disk**.
+    Fixed by reading the stored `{run_id}.json`. `test_write_receipt_does_not_launder_a_tampered_artefact`
+    now pins the security consequence: a tampered artefact must *not* re-verify.
+- **Verification environment — read this before trusting the 3.14 number.** The
+  dev machine had **no pytest, no pip, and no virtualenv**; only a system
+  Python 3.14.7. The 7 pins were installed into an isolated `/tmp/opencode/venv`
+  and run with `PYTHONDONTWRITEBYTECODE=1 -p no:cacheprovider`. Result:
+  `37 passed`, full suite `116 passed`, validator OK.
+  - **3.14.7 is not the CI matrix (3.11 + 3.12).** f-strings were audited for
+    PEP 701 same-quote nesting (3.12-only syntax) and none were found, and the
+    pre-existing 79 pass on 3.14 too — but **one CI run is still owed** before
+    the receipt guard is trusted on the matrix.
+  - Repo integrity was proven by hashing all 85 files before and after:
+    **byte-identical**, no `__pycache__`, no `.pytest_cache`, no in-repo venv.
+- New Conventions 7–9 recorded above.
+- **Deliberately untested:** the HTTP route. `GET /api/runs/{id}/receipt` does
+  not exist (M15 owns `runs.py`), so there is nothing to cover.

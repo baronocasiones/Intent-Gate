@@ -4,8 +4,9 @@ Per-module briefs that let **5 people + AI agents build this concurrently withou
 colliding**. Every module states: purpose, spec source, current stub I/O, target
 interface, dependencies, acceptance criteria, size, and a worked input→output example.
 
-Status: **created 2026-09-27** against `main` @ `6dda165` (working tree clean).
-Scope: all 18 implementable units of the scaffold. This is the *fourth* doc in the set:
+Status: **created 2026-09-27** against `main` @ `6dda165`; **extended 2026-09-27 with
+M19 (receipt renderer)** against `main` @ `8be9a94` (post PR #25 merge, tree clean).
+Scope: 19 implementable units — M1–M18 scaffold plus M19. This is the *fourth* doc in the set:
 
 | File | Answers | Audience |
 |---|---|---|
@@ -57,6 +58,7 @@ break your module (from `docs/test-suite.md`'s coverage map — extend it as you
 | M16 | Dashboard | `frontend/` | M | M2, M15 | none (gap — M17 adds) |
 | M17 | Test suite + CI | `backend/tests/`, `pyproject.toml`, `.github/` | S | all | — |
 | M18 | Demo runbook + env | `backend/.env.example` + runbook below | S | M11, M15 | `test_config.py` |
+| M19 | Receipt renderer | `backend/app/receipt/` | S | M9, M14 | `test_receipt.py` |
 
 Sizes: **S** = half a day or less · **M** = about a day · **L** = about two days ·
 **XL** = split it (see M7).
@@ -779,6 +781,77 @@ failed live call. **Code:** `backend/.env.example`; the runbook lives in this se
 
 **Size:** S. **Needs:** M11, M15.
 
+### M19 — Receipt renderer (added 2026-09-27, implemented same session)
+
+**Purpose:** render a signed run artefact as a document an auditor accepts — a
+single self-contained page carrying the verdict, the evidence ladder, the
+traceability matrix, the review-debt ledger, the exposure number, and the
+integrity footer that states which control produced it.
+
+**Spec source: none.** This is the one module with no spec behind it. `receipt`
+appears in exactly two places in this repo, both about the Figure 6 picture
+(`architecture.md` §1, `intent-attestation-gate.md` Session 7), and **§3.4's
+emitted-artefact list does not include it** (1.7's list is: per-criterion
+verdict record, traceability matrix, debt ledger, exposure, signed record).
+So the figure shows a surface the source never defines — structurally the same
+problem as the undefined E0–E6 ladder (**D1**). Recorded as **D14**.
+
+**The separation the module rests on: the JSON artefact is signed, the HTML is
+only a rendering.** `render()` is pure — no I/O, no clock, no dict-order
+dependence, so the same artefact always yields byte-identical output and the
+rendering stays re-derivable. It never hashes its own bytes; it recomputes the
+digest over the canonical body exactly as `store/artifacts.py` does and reports
+what it finds. `write_receipt()` reads the **stored** `{run_id}.json` rather
+than recomputing, so a tampered artefact cannot re-verify itself.
+
+**Code:** `backend/app/receipt/render.py` (pure renderer + gap predicates),
+`store.py` (`write_receipt`), `__init__.py` (public surface + gap constants).
+**Guard:** `backend/tests/test_receipt.py` — 37 cases. **Contracts: none**, by
+decision — the input already conforms to `run.schema.json` and the output is a
+string no module codes against, so adding a schema would contract a rendering
+and contend with M1 for no gain.
+
+**Target interface:** `render(artifact: dict) -> str` and
+`write_receipt(run_id: str, artifact: dict) -> str` (writes
+`{ARTIFACT_DIR}/{run_id}.receipt.html`). Seven sections: header, summary,
+per-criterion verdicts, traceability, debt ledger, exposure, integrity footer.
+
+**Six honesty rules, enforced as named predicates** so each is independently
+testable — this is the part worth preserving in any refactor:
+1. Signed-ness is *derived*, never asserted: no digest → "unsigned", no badge.
+2. The ladder renders under a standing PROVISIONAL banner until **D1** ratifies.
+3. Chain state is stated plainly: "per-file digest only" until **D8** lands.
+4. `measured: false` never renders a number (mirrors `ExposureCard.jsx`).
+5. Absent artefacts are *named* ("not emitted"), never faked as an empty table.
+6. `PENDING` is styled as undecided, never grouped with a decision.
+
+**Acceptance criteria** — all met, verified by the guard:
+- [x] `render()` deterministic; independent of key insertion order
+- [x] Footer digest **equals** `write_artifact`'s own computation, asserted
+      against `write_artifact` itself rather than a re-implementation
+- [x] Unsigned artefact → "unsigned", and the literal `sha256` appears nowhere
+- [x] Mismatched digest → reported, not hidden; tampering with a signed body is
+      detected
+- [x] `measured: false` + `null` rate → the string `0%` appears nowhere in the
+      rendered content
+- [x] Missing traceability/ledger/exposure → each named explicitly
+- [x] Empty rationale → visible gap marker, not a blank cell
+- [x] `PENDING` and `CERTIFIED` produce different markup
+- [x] Self-contained: no `http(s)://`, no `<script>`, styles inlined
+- [x] Zero network calls (spy client) and zero llm imports (`ast` walk)
+- [x] All values escaped — rationales and locations are untrusted text
+- [x] `tmp_path` discipline; repo tree stays byte-identical
+- [x] All 79 pre-existing tests untouched and still green (116 total)
+
+**Size:** S (done). **Needs:** M9 (emits the artefact), M14 (`ARTIFACT_DIR`).
+**Open:** the serving route `GET /api/runs/{id}/receipt` is **not written** —
+`routers/runs.py` is M15's exclusive path (rule 2). Hold it until M9 emits real
+artefacts, or every served receipt reads "not emitted".
+
+**Note for whoever picks this up:** PDF output is reachable with zero new
+dependencies — the document is self-contained HTML with a print stylesheet, so
+Ctrl+P yields the PDF. A real PDF library would be a Rule 9 decision.
+
 ---
 
 ## 6. Decisions that gate modules
@@ -802,6 +875,7 @@ record that you did.
 | **D11** | Per-run token/cost ceiling | M7, M11 | Hard cap per criterion group; report spend per run |
 | **D12** | M7 demo scope if the clock slips | M7, M18 | 1 criterion group, 2 probes, mock-first |
 | **D13** | GitHub write-back (comment + check run) | M15 | Stretch — after the API serves real data |
+| **D14** | What a "receipt" is — the figure shows a surface §3.4 never defines | M19, M9, M15 | Human-readable rendering of the signed artefact; JSON stays canonical, HTML is regenerable. Implemented; awaiting M9 to feed it |
 
 ---
 
@@ -847,4 +921,51 @@ record that you did.
   (`cherry-pick ac7a6da`) or ships as a `baron`→`main` PR; ratify or replace D1–D13 before
   Wave 0 starts, since D1 (evidence ladder) blocks M7/M8/M9 and D6 (read-only enforcement
   point) is a one-line change that turns the differentiator from a claim into a control.
+
+### 2026-09-27 — Session 15: M19 receipt renderer designed, built, and verified
+- `/start` instruction: "creating a receipt renderer module". `/start` protocol ran; no local
+  `AGENTS.md` existed (the `6dda165 repo cleanup` removed it), so session state came from the
+  `architecture.md` / `modules.md` logs. No receipt doc existed — reported, and the module
+  scoped by question rather than assumed.
+- **Finding that shaped the session:** `receipt` appears only in the Figure 6 picture, never in
+  §3.4's emitted-artefact list. The module had no spec, so four decisions were taken with the
+  user before any code: (a) human-readable signed record, not a PR comment or a dashboard view;
+  (b) **backend-only** — the moat claim is "an evidence format an auditor accepts", which is a
+  document, and the frontend has no test runner, so a React receipt would be unverified and
+  would happily render itself from `PENDING`/`E0` stubs wearing an auditor's clothes; (c) signed
+  JSON + HTML rendering, not a real PDF (no PDF lib is pinned, and Ctrl+P on self-contained
+  HTML gets there with zero new dependencies); (d) render with provisional markers rather than
+  block on D1/D8.
+- **Built:** `backend/app/receipt/{render.py,store.py,__init__.py}` + `backend/tests/test_receipt.py`.
+  No contract added, no dependency added, no existing module touched.
+- **Two failures found by running the tests — not by reasoning about them:**
+  1. *Test bug (mine).* `assert "0%" not in out` was grepping the whole document and collided
+     with the renderer's own stylesheet (`width: 100%`). Fixed with a `_content()` helper that
+     strips the `<style>` block, so content assertions only see content.
+  2. *Real design defect.* `write_receipt` received the pre-digest payload, so `digest_state`
+     returned `absent` and the receipt rendered **"unsigned" for an artefact that was in fact
+     signed on disk** — the exact dishonesty the module exists to prevent, shipping in the first
+     implementation. Fixed by having `write_receipt` read the stored `{run_id}.json`. Recomputing
+     the digest there would have been worse than useless: a tampered artefact would re-verify
+     itself. Two regression tests added, both confirmed PASSED.
+- **Verification:** 37 receipt cases + full suite **116 passed**, validator OK ×1, on Python
+  **3.14.7** in an isolated `/tmp/opencode/venv` (all 7 pins installed). Repo verified
+  **byte-identical** (85 files hashed before/after; no `__pycache__`, no `.pytest_cache`, no
+  in-repo venv). **Caveat: 3.14 is not the CI matrix (3.11 + 3.12)** — f-strings were audited
+  for PEP 701 same-quote nesting (3.12-only) and none were found, but one CI run is still owed.
+- **Repo-state correction (resolves the Session 14 follow-up):** Session 14 recorded
+  `ac7a6da` as unmerged and unpushed, on a local `baron` 1 ahead / 5 behind. `git log` now
+  shows `8be9a94 Merge pull request #25 from baronocasiones/baron` → `63e624c` → `ac7a6da`.
+  **The module brief landed on `main` via PR #25; nothing was lost.** `origin/baron` *is* an
+  ancestor of `main`, so branching from `main` was correct. This working copy is a fresh clone
+  (2 reflog entries: clone at `6dda165`, then one fast-forward) — not the copy Session 14 ended
+  in. `packed-refs` is stale (clone-time snapshot); the loose refs and `FETCH_HEAD` agree.
+- **Not done, deliberately:** `GET /api/runs/{id}/receipt`. `routers/runs.py` is M15's
+  exclusive path (rule 2), so it stays a request — and is better held until M9 emits real
+  artefacts. **Nothing committed, no branch created** — M19 is untracked, awaiting the user's
+  own branch.
+- **New conventions established (M19):** the artefact is the record and the receipt is only a
+  rendering; signed-ness is derived by recomputation and never asserted; a renderer degrades to
+  an explicit named gap rather than an empty table or a raised error; every value reaching the
+  document is escaped because locations and rationales are untrusted text.
 
