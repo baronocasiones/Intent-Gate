@@ -166,3 +166,4 @@ frontend/{index.html,package.json,vite.config.js}
 - Wrote this file from direct reads of every backend module, all 5 contracts, the validator, both fixtures, `App.jsx`/`api.js`/`fixtures.js`/4 components, `requirements.txt`, tests, `.env.example`, `.gitignore`. No code changed.
 - Findings recorded as gaps (§11), including the `_dist` three-level-climb defect and the unwired `jobs` queue — flagged, not fixed, pending user go.
 - Open for next session: fix §11 items in priority order; regenerate Figure 6 if code diverges from it; update `AGENTS.md` repo-state (still lists 3 files vs the real tree).
+- Committed as `dc8493a` on branch `baron` per user request (docs-only commit; pre-existing working-tree `M docs/intent-attestation-gate.md` + `D gen_fig6_architecture.py` + `__pycache__/` left unstaged, none this session's).

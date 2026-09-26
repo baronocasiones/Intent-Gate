@@ -77,3 +77,18 @@ Six stages:
 - `AGENTS.md` runtime line, Convention 7, and open decisions stripped of Bob-harness/Bobcoins fallbacks; spend/burn plan is watsonx.ai only.
 - `gen_fig6_architecture.py` de-Bobbed (spend cap subtitle, N workers, attestor-policy flags, WATSONX_API_KEY, attestor-policy config) and Figure 6 PNG regenerated; prior PNG backed up to `/tmp/opencode/fig6-backup/`.
 - Untouched on purpose: historical session-log lines naming Bob (audit trail) and market-research dossiers describing the IBM Bob product as a competitor/channel.
+
+### 2026-09-27 — Session 11: frontend + backend file scaffold (branch `baron`, commit `617a134`)
+- `/start` goal: setup the file scaffold for frontend and backend. Zero code existed; scaffold-only, no gate logic implemented.
+- **Backend (`backend/`, FastAPI modular monolith, 33 files):** `app/main.py` (serves API + built Vite `dist/` when present), `config.py`, `db.py` (SQLite WAL), `routers/` (`webhooks.py` POST /webhooks/github with injected-payload fallback, `runs.py` GET /api/runs + /{id}, `metrics.py` GET /api/metrics), `orchestrator/` (`pipeline.py` 6-stage chain, `jobs.py` asyncio queue), `gates/` (6 fixture-shaped stubs: ingest/extract/parse/verify/adjudicate/emit), `models/schemas.py` (Pydantic mirrors `contracts/`), `store/artifacts.py` (hash-chained JSON), `llm/` (`watsonx_client.py` spike target + `mock_client.py` zero-spend fallback), `attestor/policy.py` (GRANTS read/subagent/skill/workflow, DENIES edit/execute + assert), `metrics/false_certified.py` (7 operators + rate fn), `tests/test_scaffold.py`, `requirements.txt`, `.env.example`.
+- **Frontend (`frontend/`, React+Vite, 12 files):** `package.json` (react 18, vite 6 — not yet `npm install`ed), `vite.config.js` (API proxy → :8000), `App.jsx` (live-API first, fixture fallback + fixture-mode badge), `api.js`, `fixtures.js`, 4 components (VerdictBadge, TraceabilityMatrix, EvidenceLadder, ExposureCard), `public/fixtures/demo_run.json`.
+- **Contracts/fixtures/scripts:** 5 schemas (`contracts/`: run, verdict, criterion, traceability, exposure), 2 fixtures (`demo_run`, `demo_traceability`), `scripts/validate_contracts.py` (stdlib + jsonschema only).
+- **Verified green:** `pytest backend/tests` 3 passed; validator OK ×2; pipeline stub returns `exit_code: 1` (gate blocks by default); FastAPI import OK.
+- Committed to new branch `baron` as `617a134` (53 files, +584); pre-existing Sessions 9–10 working-tree changes deliberately left unstaged (landed separately as `56c2911` by another session). Branch not pushed to `origin`.
+- **Next:** implement gates depth-first (adjudicate + metric), watsonx.ai auth/call-pattern spike, `npm install` + wire dashboard live.
+
+### 2026-09-27 — Session 12: Figure 6 generator repair + `56c2911` commit to `baron`
+- Found `gen_fig6_architecture.py` unrunnable after the Session 10 de-Bobbing (5 trailing-`,,` SyntaxErrors); fixed all five, finished attestor-box terms (`attestor policy`, `allows:`, `DENIED`), regenerated the PNG with the generator's own overflow check green (new md5 `aeb47178`).
+- Removed a mislabeled self-made backup (md5-identical to the new PNG, not pre-change); genuine Bob-era PNG still at `/tmp/opencode/fig6-backup/Figure-6-System-Architecture-orig-2026-09-26.png`. Generator verified with zero `bob` matches.
+- Secret scan clean; committed 14 files as `56c2911` on the pre-existing `baron` branch (not pushed to `origin`).
+- Live parallel work deliberately untouched: uncommitted `docs/architecture.md`, working-tree `D gen_fig6_architecture.py` (preserved in `56c2911` history regardless), `__pycache__/` dirs.
