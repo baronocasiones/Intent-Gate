@@ -4,8 +4,9 @@ Append-only module record for the project's test suite. Architecture context
 lives in `docs/architecture.md` (code-faithful) and `docs/intent-attestation-gate.md`
 (concept); this file records only how the suite is organized, run, and extended.
 
-Status: **scaffold + architecture-derived unit tests** — 79 tests, green on
-Python 3.11.9 and 3.12.14, wired into GitHub Actions. Last verified: 2026-09-27.
+Status: **scaffold + architecture-derived unit tests** — 100 tests, green on
+Python 3.11.9 and 3.12.14, wired into GitHub Actions. Last verified: 2026-09-27
+(Session 18: 79 → 100, +21 from M3).
 
 ## Layout
 
@@ -22,6 +23,7 @@ backend/tests/
   test_metric.py                   §9 seven operators, rate math, exposure-schema conformance
   test_llm.py                      §7 mock determinism; watsonx fails loud; zero-network proof
   test_schemas_contracts.py        §10 pydantic↔contract parity, fixture validation, validator wrap
+  test_models_parity.py            M3 model↔contract bijection, field coverage, strictness + honesty pins
   test_api.py                      §5 route table + health/webhook/stub endpoint shapes
   test_store_db.py                 §6 WAL mode, runs table, sha256-of-sorted-body artifacts
   test_config.py                   §3 env defaults/overrides, MOCK_LLM parsing, reload-restore
@@ -43,7 +45,7 @@ needs network access, a database file, or watsonx.ai credentials.
 | § | Concern | Test file |
 |---|---|---|
 | §1/§4 | runtime shape, data flow, pipeline chain | `test_pipeline.py` |
-| §3 | six gates, schemas, config, LLM clients, metric, policy | `test_gates.py`, `test_schemas_contracts.py`, `test_config.py`, `test_llm.py`, `test_metric.py`, `test_policy.py` |
+| §3 | six gates, schemas, config, LLM clients, metric, policy | `test_gates.py`, `test_schemas_contracts.py`, `test_models_parity.py`, `test_config.py`, `test_llm.py`, `test_metric.py`, `test_policy.py` |
 | §5 | API surface (health, webhook, runs, metrics) | `test_api.py` |
 | §6 | persistence (SQLite WAL, hash-sha256 artifacts) | `test_store_db.py` |
 | §7 | LLM dual-mode + spend discipline | `test_llm.py` |
@@ -73,13 +75,26 @@ the attestor box ↔ `test_policy.py`, the metering note ↔ `test_llm.py` /
 4. **Characterization tests flip deliberately.** Tests marked with §11.x pin
    today's stub/unwired behavior; when the gap closes, update the test in the
    same change — never silently.
-5. **Contract boundary is the strict layer.** Pydantic models may default
-   fields (e.g. `rationale=""`); the JSON schemas enforce required fields.
-   Fixtures validate against contracts in-suite, exactly as CI runs the
-   validator script.
+5. **Two tiers, not one strictness.** The JSON schemas are the **permissive
+   interchange layer** (none sets `additionalProperties: false`); the pydantic
+   models are the **strict in-process layer** (`extra="forbid"`, added Session
+   18). Pydantic may still default fields (e.g. `rationale=""`); the schemas
+   enforce `required`. So "which layer is strict" is only answerable per
+   direction: strict on unknown keys in the model, strict on missing required
+   keys in the contract. `test_models_parity.py` pins the model half so it
+   cannot drift back to `ignore`. Fixtures validate against contracts in-suite,
+   exactly as CI runs the validator script.
 6. **No product code changes to make tests pass.** A failing test is first
    interrogated: test bug → fix test; real defect → report (§11 style), don't
    patch product code from the test session.
+7. **Prove a guard fails before trusting it** (Session 16's generator rule,
+   extended to tests — Session 18). A guard never seen failing is not a guard.
+   `/tmp/opencode/m3_guard_proof.py` mutates `schemas.py` five ways, asserts
+   the matching test fails, restores, and re-asserts green. **The fifth
+   mutation initially did not fire** and exposed an overstated docstring.
+8. **A test that pins a value is not a test that pins a type.** Round-trip
+   equality survives a de-typing (`dict[str, dict[str,int]]` → `dict`), so a
+   claim about a *type* needs its own negative assertion.
 
 ## Known gaps (not covered yet)
 
@@ -93,6 +108,17 @@ the attestor box ↔ `test_policy.py`, the metering note ↔ `test_llm.py` /
   harness yet — add one when the queue is wired.
 - **Python 3.10 floor**: dependency floor (fastapi/uvicorn/jsonschema/pytest
   all require ≥3.10) is not in the CI matrix; add if floor support matters.
+- **No fixture pair for `criterion` or `exposure`** (M1 AC 1, open). The mirrors
+  for those two contracts are therefore tested with *constructed* values, not
+  corpus data. This is M1's gap, not M3's — but it means the corpus and the
+  mirrors are not yet cross-checked for those two shapes. Add the fixtures and
+  this becomes a real end-to-end check.
+- **The mirrors have no product callers** (`architecture.md` §11.10), so
+  `test_models_parity.py` proves the *shapes* are faithful and nothing more. It
+  cannot catch a gate that constructs a model wrongly — no gate does yet.
+- **CI is still unverified on GitHub.** Every number in this file is local
+  evidence from 3.11.9 / 3.12.14. The workflow has never run remotely, because
+  the branch has not been pushed.
 
 ## CI
 
@@ -102,7 +128,10 @@ keyed on `backend/requirements.txt`; steps: install requirements → `pytest`
 → `python scripts/validate_contracts.py`.
 
 Both legs were executed locally before the workflow landed: **79 passed**
-on 3.11.9 and on 3.12.14, validator OK ×2 on both.
+on 3.11.9 and on 3.12.14, validator OK ×2 on both. Re-run at Session 18 after
+M3: **100 passed** on both legs, validator OK ×2 on both. **Still unverified
+on GitHub** — the branch has not been pushed, so no remote CI run has ever
+executed this workflow.
 
 ## Session log (append-only)
 
@@ -128,3 +157,45 @@ on 3.11.9 and on 3.12.14, validator OK ×2 on both.
 - Note: `jsonschema.RefResolver` deprecation warnings are shared with the
   product's own `scripts/validate_contracts.py` (same API) — left visible as
   debt, not suppressed.
+
+### 2026-09-27 — Session 18: M3 parity suite (+21 tests, 79 → 100)
+- Driven by the `/start` instruction *"develop the pydantic mirrors (M3)"*. This
+  file needed updating because a **new test file landed and the count moved**;
+  it had not been touched before this entry and still claimed 79 tests.
+- **Added `backend/tests/test_models_parity.py`** (21 tests), placed in
+  `backend/tests/` deliberately as an **M3-exclusive file**: the M3 brief named
+  `test_schemas_contracts.py` for the parity assertion, but `backend/tests/` is
+  M17's path (§0.2) and that file is not in the §0.4 contended list, so editing
+  it would have created the two-owner collision §0.4 exists to prevent. The new
+  file **does not duplicate** the enum, fixture-load or round-trip tests already
+  in `test_schemas_contracts.py`.
+- What the 21 cover: the **title ↔ class bijection** over `contracts/*.schema.json`
+  (fails when M1 adds a schema, until it is mirrored); per-contract field coverage
+  and `required` coverage; a **strictness pin** (`extra="forbid"` on all six
+  models, plus a raising check); the **`Exposure` honesty pin** (`null` rate with
+  `measured: false`, never `0.0`, and the measured `0.0` stays distinct); a
+  round trip per new model; `criterion`/`traceability` fixture and constructed-value
+  loads; and a binding of `Exposure` to its real producer,
+  `metrics.false_certified_rate`, for both the empty and measured cases.
+- **Convention 5 was amended, not just appended to.** "Contract boundary is the
+  strict layer" became **"Two tiers, not one strictness"**, because the models
+  *are* the strict layer for unknown keys since Session 18. Left as-is it would
+  have contradicted the code it describes. One sentence from the old convention
+  (in-suite fixture validation mirrors the CI validator run) was preserved.
+- **A guard failed to fire, and it caught a false claim.** The fifth mutation in
+  `/tmp/opencode/m3_guard_proof.py` (de-typing `by_operator` to a bare `dict`)
+  did **not** fail the suite: `test_exposure_accepts_metric_function_output`
+  asserted only that values round-tripped, while both the test's placement and
+  the model docstring claimed the *type* was checked. This is the origin of new
+  Convention 8. Fixed, re-proven — **5/5 mutations now fire**, suite green after
+  restore. Per Convention 6 the fix was to the *test*, not to the product model.
+- **Verification:** **100 passed** on **3.11.9 and 3.12.14**; validator exit 0 on
+  both legs; repo tree unpolluted (Convention 3 intact). Warnings are pre-existing:
+  `jsonschema.RefResolver` (D10, deferred by decision) and
+  `StarletteDeprecationWarning` on `httpx2` in fastapi's testclient — the latter
+  would need a dependency change, so it is a **decision**, not a fix.
+- **Open:** `criterion` and `exposure` still have no fixture pair (M1 AC 1), so
+  those two mirrors are tested with constructed values rather than corpus data.
+  The mirrors have zero product callers (§11.10), so this suite proves shape
+  fidelity only. **CI has still never run on GitHub** — every number here is
+  local evidence.

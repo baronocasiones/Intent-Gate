@@ -153,7 +153,7 @@ wired yet.
 5. `assert_read_only` is test-only; pipeline never calls it.
 6. §2 `_dist` path defect (three-level climb, should be two).
 7. Missing vs spec: GitHub write-back (comments + check runs), review-debt ledger, risk-weighted exposure decay curve, signed cross-file hash chain, SSE/polling, auth, real demo-repo target.
-8. Dependencies pinned in `backend/requirements.txt`: fastapi 0.135.3, uvicorn 0.44.0, pydantic 2.13.0, httpx 0.28.1, jsonschema 4.26.0, pytest 9.0.3, pytest-asyncio 1.4.0. Smoke tests in `backend/tests/test_scaffold.py` (pipeline stub path, policy guard, metric-empty) are the only coverage.
+8. Dependencies pinned in `backend/requirements.txt`: fastapi 0.135.3, uvicorn 0.44.0, pydantic 2.13.0, httpx 0.28.1, jsonschema 4.26.0, pytest 9.0.3, pytest-asyncio 1.4.0. ~~Smoke tests in `backend/tests/test_scaffold.py` (pipeline stub path, policy guard, metric-empty) are the only coverage.~~ **Superseded at Session 13 and restated at Session 18:** that was true only pre-Session-13. The suite is now **11 test files / 100 tests**, green on 3.11.9 and 3.12.14, and `docs/test-suite.md` owns the per-file map. The correction is kept inline because a live "only coverage" claim in this file is exactly the kind of statement that ages into a lie.
 9. **Dual-mode is not wired** (found 2026-09-27 while reconciling Figure 6 — previously unrecorded). `MOCK_LLM` has no reader in `backend/app`, so nothing selects between `mock_client` and the live client; `mock_client` is unreachable from product code. `modules.md` rule 4 and AGENTS.md Convention 4 both assume a switch that does not exist. Owner: **M11**, and it is a prerequisite for M7's fan-out, not a nicety.
 10. **The pydantic mirrors have zero product callers** (found 2026-09-27, Session 18). As of that session `app.models.schemas` is imported by `test_models_parity.py` and `test_schemas_contracts.py` and by **nothing else** — no gate, router, orchestrator or metric module uses it. M3 completed (5/5 parity, 100 tests green) but is not yet load-bearing; the models become real only when M4–M9 and M13/M15 construct and consume them. Related: the strictness added in Session 18 makes two paths that do not exist yet — reading a `write_artifact` envelope into `RunRecord` (`sha256` is not a contract key) and validating M9's record (a superset of `run.schema.json`) — require key projection first. Both are recorded in `modules.md` §M3 as M9/M14 obligations.
 
@@ -176,7 +176,7 @@ backend/app/attestor/policy.py
 backend/app/metrics/false_certified.py
 backend/app/models/schemas.py
 backend/app/store/artifacts.py
-backend/tests/test_scaffold.py
+backend/tests/*.py            11 files, 100 tests — map in docs/test-suite.md
 contracts/*.schema.json  fixtures/demo_*.json  scripts/validate_contracts.py
 frontend/src/{App.jsx,main.jsx,api.js,fixtures.js,components/*}
 frontend/{index.html,package.json,vite.config.js}
