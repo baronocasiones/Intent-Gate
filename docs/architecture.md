@@ -167,3 +167,8 @@ frontend/{index.html,package.json,vite.config.js}
 - Findings recorded as gaps (§11), including the `_dist` three-level-climb defect and the unwired `jobs` queue — flagged, not fixed, pending user go.
 - Open for next session: fix §11 items in priority order; regenerate Figure 6 if code diverges from it; update `AGENTS.md` repo-state (still lists 3 files vs the real tree).
 - Committed as `dc8493a` on branch `baron` per user request (docs-only commit; pre-existing working-tree `M docs/intent-attestation-gate.md` + `D gen_fig6_architecture.py` + `__pycache__/` left unstaged, none this session's).
+
+### 2026-09-27 — Session 13: test suite + CI recorded (supplementary note)
+- Test suite established per this record: `pyproject.toml` (pytest-only config at repo root), `.github/workflows/tests.yml` (push/PR/dispatch, matrix py3.11+py3.12 → pytest + `scripts/validate_contracts.py`), 9 new `backend/tests/test_*.py` files, `.gitignore` hygiene (`__pycache__/`, `*.pyc`, `.pytest_cache/`) — committed as `303241e` on `baron`; `backend/.python-version` → `3.12.14` committed as `fe8ab25`.
+- §11.8 superseded by measurement: the "only coverage = 3 smokes" claim held only pre-Session-13 — suite is now **79 tests green on 3.11.9 and 3.12.14** (full CI matrix rehearsed locally, validator OK ×2 both legs).
+- Module record for all test-suite matters lives in **`docs/test-suite.md`** (layout, §→test coverage map, conventions, gaps, session log); this file remains authoritative for the system itself.
