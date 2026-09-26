@@ -172,3 +172,24 @@ frontend/{index.html,package.json,vite.config.js}
 - Test suite established per this record: `pyproject.toml` (pytest-only config at repo root), `.github/workflows/tests.yml` (push/PR/dispatch, matrix py3.11+py3.12 → pytest + `scripts/validate_contracts.py`), 9 new `backend/tests/test_*.py` files, `.gitignore` hygiene (`__pycache__/`, `*.pyc`, `.pytest_cache/`) — committed as `303241e` on `baron`; `backend/.python-version` → `3.12.14` committed as `fe8ab25`.
 - §11.8 superseded by measurement: the "only coverage = 3 smokes" claim held only pre-Session-13 — suite is now **79 tests green on 3.11.9 and 3.12.14** (full CI matrix rehearsed locally, validator OK ×2 both legs).
 - Module record for all test-suite matters lives in **`docs/test-suite.md`** (layout, §→test coverage map, conventions, gaps, session log); this file remains authoritative for the system itself.
+
+### 2026-09-27 — Session 14: module briefs added (documentation only, no code change)
+- New sibling doc **`docs/modules.md`** created and committed to `baron` as `ac7a6da`. It
+  holds per-module implementation briefs (18 modules: purpose, spec source, current stub
+  I/O, target interface, dependencies, acceptance criteria, size, worked I/O example), an
+  integration-rules set, a contended-file ownership table, build waves with the critical
+  path, and 13 unsettled decisions (D1–D13).
+- **This file remains authoritative for the system as built.** `modules.md` is
+  *forward-looking*: where the two disagree about what the code does today, this file wins.
+  Nothing in the system changed this session — no code, no contracts, no dependencies, no
+  endpoints. The 79/79 suite and the 2-pair validator were run green as a baseline and
+  were unchanged.
+- Findings recorded in `modules.md` against the sections here, all read from source rather
+  than inferred: `criterion` and `exposure` schemas have no entry in the validator's
+  `PAIRS` (§10); `frontend/src/fixtures.js` (1 verdict) and
+  `frontend/public/fixtures/demo_run.json` (misnamed — holds the traceability payload,
+  loaded by nothing) have drifted from `fixtures/demo_run.json` (§10, §2); the E0–E6 ladder
+  is named in the source but never defined (D1); `npm install`/`npm run build` have never
+  been run, which is why the §2 `_dist` defect is unexercised.
+- §11 is unchanged — all gaps remain open. `modules.md` assigns each one an owner module
+  (M1, M2, M10, M13, M15, M16, M17) rather than closing any.

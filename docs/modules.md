@@ -828,3 +828,23 @@ record that you did.
 - Open at archive: all 18 modules unimplemented; D1–D13 unsettled; CI still unverified
   remotely; `AGENTS.md` repo-state section still stale.
 
+### 2026-09-27 — Session 14 archive: committed to `baron` as `ac7a6da`
+- User directed the commit to `baron`, not `main`. Committed docs-only (830 insertions,
+  one file) as `ac7a6da`. **Not pushed** — no push was requested.
+- `baron` had already been merged into `main` (`688cc42`), so committing there **re-diverged
+  the branch**: `baron` is now 1 commit ahead of `origin/baron` and 5 behind `main`. The 5
+  behind it (PR #1 uploads `ccc4736`/`1b7b647` + `6dda165 repo cleanup`) were never on
+  `baron` at all, so the working tree gained no files and the commit is a clean docs-only
+  change; a future `baron`→`main` PR would carry this file alone.
+- **Correction made mid-session and worth keeping:** the first read of the history assumed
+  the 9 root-level files deleted by `6dda165` would be restored on checkout to `baron`.
+  They were not — they arrived on `main` via PR #1 (`Aixxn-patch-1`), never via `baron`.
+  Verified with `ls` + `git status` before committing rather than acting on the assumption.
+- Verification basis: 79/79 tests green and validator OK ×2 were run against `main`
+  @ `6dda165` before the branch switch, and were **not** re-run on `baron` (trees differ
+  only by the never-shared files above, so the result carries over).
+- Follow-ups for the next session: decide whether this lands on `main` directly
+  (`cherry-pick ac7a6da`) or ships as a `baron`→`main` PR; ratify or replace D1–D13 before
+  Wave 0 starts, since D1 (evidence ladder) blocks M7/M8/M9 and D6 (read-only enforcement
+  point) is a one-line change that turns the differentiator from a claim into a control.
+
