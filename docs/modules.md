@@ -578,13 +578,39 @@ selects mock vs live. **Code:** `backend/app/llm/watsonx_client.py` (`complete`)
 `llm/mock_client.py`, `config.py`, `backend/.env.example`. **Today:** mock returns a
 deterministic canned verdict with zero spend; the live client raises `RuntimeError`
 without a key and `NotImplementedError` past it (IAM token exchange + generation call
-are unimplemented). **This is the project's open hour-one spike.**
+are unimplemented). **The research spike is answered in `docs/watsonx-integration.md`;
+this module is still unimplemented.**
+
+**Spike answer (recorded 2026-09-27, full dossier: `docs/watsonx-integration.md`)**
+- **Auth** — two steps, not one. The API key is exchanged at
+  `POST https://iam.cloud.ibm.com/identity/token` (form-encoded
+  `grant_type=urn:ibm:params:oauth:grant-type:apikey&apikey=…`) for an `access_token`, sent as
+  `Authorization: Bearer …`. **`expires_in` is 3600s** — cache the token *with its TTL* and
+  re-exchange on expiry. A permanent cache would pass every test and fail the live demo at minute
+  61. watsonx also accepts the key directly via basic auth for dev/test; use the IAM path in
+  production (key lookup costs a service-side round trip).
+- **Endpoint** — `POST /ml/v1/text/chat` with `messages[{role, content}]`, `temperature=0`.
+  Rejected: `/ml/v1/deployments/{id}/text/generation` (marked legacy, needs a deployment id) and
+  `/v1/chat/completions` (its response envelope is documented inconsistently across two reference
+  pages — do not write a parser against an ambiguous contract).
+- **Output validity** — `response_format: {"type": "json_object"}` guarantees JSON;
+  `{"type": "json_schema", …}` / `guided_json` constrain the model to a supplied schema. Point
+  `guided_json` at the target contract and the contract becomes the model's output grammar. Needs
+  **D1** ratified first to know *which* schema.
+- **Spend** — every response returns `usage.{prompt_tokens, completion_tokens, total_tokens}`, so
+  the D11 meter is counted, not estimated. Rate limit is `429` / code `rate_limit`; bounded
+  backoff, and let the D11 ceiling be the real guard.
+- **Model id** — do **not** hardcode a guess. `GET /ml/v1/foundation_model_specs` returns the ids
+  this account can reach with `input_tier`/`output_tier`. `WATSONX_MODEL_ID` becomes a required
+  config value.
+- **Read-only, adjacent finding** — watsonx Orchestrate runs Python tools in a **read-only
+  filesystem**; `ToolPermission.READ_ONLY` is deprecated and is *not* a live control. See **D6**.
 
 **Acceptance criteria**
-- [ ] **Spike first, before M5/M7 depend on it:** confirm the watsonx.ai auth pattern
-      (IAM token exchange vs API key), the generation endpoint + request/response shape,
-      the model id, and the **burn plan** (tokens per run, runs per demo). Record the
-      answer in this section.
+- [ ] **Spike: research DONE, code NOT done.** The four spike questions are answered above and in
+      `docs/watsonx-integration.md`; §10 of that dossier lists the five items that still need a
+      provisioned account (provisioning, region, model id, burn plan, `version`/`guided_json`
+      behaviour). Close those, then land the client.
 - [ ] Implement `complete()` for real, or leave it raising — but do not leave a
       half-implemented client that looks live.
 - [ ] `MOCK_LLM=true` stays the default-safe path for CI and for a failed live call
@@ -594,8 +620,11 @@ are unimplemented). **This is the project's open hour-one spike.**
 - [ ] Secrets never committed; `config.py` reads env at import (tests patch the
       **consumer module**, not `os.environ` — see `docs/test-suite.md` Convention 2).
 - [ ] Add a spend/budget guard so one run cannot exhaust the day's tokens (**D11**).
+      `usage` comes back on every response, so the meter is counted rather than estimated.
 - [ ] New client behaviour needs a test marked `live_llm` that is **never selected in
-      CI** (`pyproject.toml` marker already exists).
+      CI** (`pyproject.toml` marker already exists). `test_watsonx_with_key_pending_spike` and
+      `test_watsonx_with_key_makes_no_network_call` must be flipped deliberately **in the same
+      commit** that lands the client — see `docs/watsonx-integration.md` §9.
 
 **Size:** M, but the spike is the schedule risk — do it in Wave 0.
 **Needs:** nothing. **Blocks:** M5, M7, and the whole live demo.
@@ -867,17 +896,17 @@ record that you did.
 
 | ID | Decision | Blocks | Recommended default |
 |---|---|---|---|
-| **D1** | E0–E6 tier semantics — undefined in the source (1.4) | M7, M8, M9, M16 | Ratify the 1.4 table; CERTIFIED requires E4 |
+| **D1** | E0–E6 tier semantics — undefined in the source (1.4) | M7, M8, M9, M16 | Ratify the 1.4 table; CERTIFIED requires E4. **Urgent (2026-09-27):** watsonx.ai `guided_json` can constrain model output to this schema, so D1 now gates the cleanest output-validity story we have — not just the tier display. See `docs/watsonx-integration.md` §4 |
 | **D2** | The 7th adversarial failure class — source names six (1.6) | M7 | Ship six; say "six" in the pitch |
 | **D3** | Verdict aggregation + whether CONDITIONAL may pass the gate (1.5) | M8, M9 | REJECTED blocks; CONDITIONAL needs a ledger entry |
 | **D4** | Demo repo target — needs real acceptance criteria to attest against | M4, M5, M13 | Smallest repo with genuine written criteria; inject payloads until chosen |
 | **D5** | Stryker corroboration of mutation ground truth | M13 | Stretch — harness first, corroboration if time |
-| **D6** | Where read-only is enforced: worker startup vs pipeline wrapper | M7, M10, M12 | Assert at worker startup, fail closed |
+| **D6** | Where read-only is enforced: worker startup vs pipeline wrapper | M7, M10, M12 | Assert at worker startup, fail closed. **Mechanism now specified (2026-09-27):** read-only bind mount of the workspace + a pre-flight capability check, modelled on watsonx Orchestrate's tool sandbox, which runs Python tools in a read-only filesystem. `ToolPermission.READ_ONLY` is deprecated and is *not* a live control — do not cite it. See `docs/watsonx-integration.md` §6 |
 | **D7** | Webhook signature verification, and behaviour with no secret configured | M15 | Verify when a secret exists; allow injection when not |
 | **D8** | Cross-file hash chain format | M9, M14 | Each artifact carries the previous digest |
 | **D9** | `status` lifecycle values (1.2) | M9, M10, M15 | The PROPOSED set in 1.2 |
 | **D10** | Migrate off deprecated `jsonschema.RefResolver` | M1, M17 | No — not during the build |
-| **D11** | Per-run token/cost ceiling | M7, M11 | Hard cap per criterion group; report spend per run |
+| **D11** | Per-run token/cost ceiling | M7, M11 | Hard cap per criterion group; report spend per run. **Data source now known:** every watsonx.ai response carries `usage.{prompt_tokens, completion_tokens, total_tokens}`, so only the policy is open. See `docs/watsonx-integration.md` §5 |
 | **D12** | M7 demo scope if the clock slips | M7, M18 | 1 criterion group, 2 probes, mock-first |
 | **D13** | GitHub write-back (comment + check run) | M15 | Stretch — after the API serves real data |
 | **D14** | What a "receipt" is — the figure shows a surface §3.4 never defines | M9, M15, M16 | Human-readable rendering of the signed artefact; JSON stays canonical, HTML is regenerable. Implemented; awaiting M9 to feed it |
@@ -927,7 +956,44 @@ record that you did.
   Wave 0 starts, since D1 (evidence ladder) blocks M7/M8/M9 and D6 (read-only enforcement
   point) is a one-line change that turns the differentiator from a claim into a control.
 
-### 2026-09-27 — Session 15: receipt renderer designed, built, and verified (out-of-band)
+### 2026-09-27 — Session 15: watsonx.ai integration research (docs only)
+- Instruction: study watsonx.ai documentation and check how it integrates into the system;
+  document it and commit.
+- Created **`docs/watsonx-integration.md`** (new research dossier, matching the existing
+  dossier pattern — `evidence-dossier.md`, `market-sizing-2026-09.md`,
+  `ai-code-review-landscape-2026-09.md`). No duplicate created; `modules.md` and
+  `architecture.md` were updated in place.
+- **M11's spike acceptance criterion is now satisfied** — §M11 carries the answer inline (the
+  brief instructed "record the answer in this section") plus a pointer to the dossier. D1, D6
+  and D11 gained what the research settled; **no decision was taken and no module was
+  rewritten.**
+- Research outputs that changed plans rather than just informing them:
+  - **`guided_json` / `response_format: json_schema`** can constrain model output to a supplied
+    JSON schema. This gives the contracts-first rule its first actual enforcement point on model
+    output, and it makes **D1** urgent rather than cosmetic — we cannot point a schema at an
+    undefined evidence ladder.
+  - **The read-only differentiator (M12/D6) has a platform precedent.** watsonx Orchestrate
+    runs Python tools in a read-only filesystem. `ToolPermission.READ_ONLY` is deprecated and
+    must not be cited; the filesystem sandbox is the real control. Recommended D6 default is
+    unchanged, its mechanism is now specified.
+  - **Orchestrate is not being adopted**, and two reasons are now sourced: it puts provisioning
+    on the critical path, and its IBM Cloud default model is **Groq-hosted `gpt-oss-120b`**,
+    which would silently move inference off watsonx.ai and break Convention 8.
+- **Self-correction recorded in the dossier §2:** my earlier claim that the IAM access token
+  lasts 30 days and needs no refresh was wrong (`expires_in` is 3600s). A permanent token cache
+  would pass every test and fail the demo at minute 61 — the client spec is TTL-aware because of
+  it.
+- Open at archive: the five items in dossier §10 need a provisioned account (provisioning,
+  region, model id, burn plan, `version`/`guided_json` behaviour). M11 remains unimplemented. No
+  code, contract, fixture, dependency, or endpoint changed. `AGENTS.md` was updated locally but
+  is gitignored and **not** in the commit.
+
+### 2026-09-27 — Session 17: receipt renderer designed, built, and verified (out-of-band)
+
+> Renumbered at merge time. This out-of-band session ran in parallel with Session 15
+> (watsonx research) on the same date, on a separate branch, and was originally logged as
+> "Session 15". `main` already holds 15 (and `architecture.md` 15–16), so this entry takes
+> the next free number rather than rewriting an existing heading.
 - `/start` instruction: "creating a receipt renderer module". `/start` protocol ran; no local
   `AGENTS.md` existed (the `6dda165 repo cleanup` removed it), so session state came from the
   `architecture.md` / `modules.md` logs. No receipt doc existed — reported, and the module
@@ -968,14 +1034,19 @@ record that you did.
 - **Not done, deliberately:** `GET /api/runs/{id}/receipt`. `routers/runs.py` is M15's
   exclusive path (rule 2), so it stays a request — and is better held until M9 emits real
   artefacts.
-- **Delivery (corrected after this log was first written):** the receipt renderer is committed on
-  branch `receipt-renderer`, forked from `main` @ `8be9a94` — `dc60c89` (code + guard) and `1ba3729`
-  (docs), plus a third commit correcting these session logs, all authored
+- **Delivery (corrected twice; this paragraph was wrong both times):** the receipt renderer is
+  committed on branch `receipt-renderer`, forked from `main` @ `8be9a94` — `dc60c89` (code + guard)
+  and `1ba3729` (docs), plus commits correcting these session logs, all authored
   `Cody <230651661+Cody-me@users.noreply.github.com>` with identity set repository-local only
-  (`~/.gitconfig` untouched). **The push is still outstanding** — the non-interactive environment has
-  no credential helper and `gh` is not installed, so the branch is local-only and no PR exists yet.
-  Whether `Cody-me` holds write access on `baronocasiones/Intent-Gate` is **untested**: the push has
-  never reached the server, so a 403 is still possible and would mean moving the branch to a fork.
+  (`~/.gitconfig` untouched). **Pushed** — `origin/receipt-renderer` is at `0fd63fa`, byte-identical
+  to local. The earlier claims of "no credential helper" and "`gh` is not installed" were both wrong:
+  `gh` 2.101.0 was present but never logged in, and the missing credential helper is what made every
+  HTTPS push re-prompt and fail — GitHub has not accepted account passwords for HTTPS push since
+  2021, so the password was never the variable. Fixed with `gh auth login` and then
+  `gh auth setup-git`; the second command is the one that actually installed the helper, and
+  without it git would still prompt every time. **Write access for `Cody-me` on
+  `baronocasiones/Intent-Gate` is confirmed, not untested** — `permissions.push: true`,
+  `admin: false`. The 403 / fork contingency recorded earlier did not occur. **No PR opened yet.**
   Two decisions were taken rather than assumed: `AGENTS.md` stays gitignored (excluded from the
   commit, and flagged there as a contradiction worth resolving), and the commit identity is a
   contributor's noreply address rather than the repo owner's, since attributing this work to the
@@ -984,4 +1055,3 @@ record that you did.
   rendering; signed-ness is derived by recomputation and never asserted; a renderer degrades to
   an explicit named gap rather than an empty table or a raised error; every value reaching the
   document is escaped because locations and rationales are untrusted text.
-
