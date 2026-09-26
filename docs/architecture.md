@@ -221,4 +221,10 @@ frontend/{index.html,package.json,vite.config.js}
   `8be9a94 Merge pull request #25 from baronocasiones/baron` → `63e624c` → `ac7a6da`. Nothing was
   lost, and `origin/baron` is an ancestor of `main`. This checkout is a *fresh clone* (reflog has
   only a clone and one fast-forward), not the copy Session 14 ended in — worth knowing, since
-  Session 14's local `baron` branch does not exist here. M19 remains untracked and uncommitted.
+  Session 14's local `baron` branch does not exist here.
+- **Delivery, corrected after this log was first written:** M19 is committed on branch
+  `m19-receipt-renderer` (`dc60c89` code + guard, `1ba3729` docs, then a third commit correcting
+  these logs), based on `main` @ `8be9a94`, authored
+  `Cody <230651661+Cody-me@users.noreply.github.com>`. **Not yet pushed** —
+  no credential helper in this environment and no `gh`, so no PR exists. Write access for that account
+  on this repo is untested.

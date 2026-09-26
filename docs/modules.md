@@ -962,8 +962,19 @@ record that you did.
   in. `packed-refs` is stale (clone-time snapshot); the loose refs and `FETCH_HEAD` agree.
 - **Not done, deliberately:** `GET /api/runs/{id}/receipt`. `routers/runs.py` is M15's
   exclusive path (rule 2), so it stays a request — and is better held until M9 emits real
-  artefacts. **Nothing committed, no branch created** — M19 is untracked, awaiting the user's
-  own branch.
+  artefacts.
+- **Delivery (corrected after this log was first written):** M19 is committed on branch
+  `m19-receipt-renderer`, forked from `main` @ `8be9a94` — `dc60c89` (code + guard) and `1ba3729`
+  (docs), plus a third commit correcting these session logs, all authored
+  `Cody <230651661+Cody-me@users.noreply.github.com>` with identity set repository-local only
+  (`~/.gitconfig` untouched). **The push is still outstanding** — the non-interactive environment has
+  no credential helper and `gh` is not installed, so the branch is local-only and no PR exists yet.
+  Whether `Cody-me` holds write access on `baronocasiones/Intent-Gate` is **untested**: the push has
+  never reached the server, so a 403 is still possible and would mean moving the branch to a fork.
+  Two decisions were taken rather than assumed: `AGENTS.md` stays gitignored (excluded from the
+  commit, and flagged there as a contradiction worth resolving), and the commit identity is a
+  contributor's noreply address rather than the repo owner's, since attributing this work to the
+  owner would have been impersonation.
 - **New conventions established (M19):** the artefact is the record and the receipt is only a
   rendering; signed-ness is derived by recomputation and never asserted; a renderer degrades to
   an explicit named gap rather than an empty table or a raised error; every value reaching the
