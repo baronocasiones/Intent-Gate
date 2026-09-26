@@ -139,9 +139,9 @@ wired yet.
 
 ## 10. Contracts, fixtures, validator, frontend
 
-- **Contracts** (`contracts/*.schema.json`, draft-07): `criterion` (`criterion_id, text, testable`), `verdict` (verdict enum + E0–E6 tier + `locations[]` + `rationale`), `run` (`run_id, status, verdicts[], measured`), `traceability` (`run_id, links[{criterion_id, locations[], evidence_tier}]`), `exposure` (`false_certified_rate, measured, by_operator`). `run` → `verdict` via `$ref`.
+- **Contracts** (`contracts/*.schema.json`, draft-07): `criterion` (`criterion_id, text, testable`), `verdict` (verdict enum + E0–E6 tier + `locations[]` + `rationale`), `run` (`run_id, status, verdicts[], measured`), `traceability` (`run_id, links[{criterion_id, locations[], evidence_tier}]`), `exposure` (`false_certified_rate, measured, by_operator`), `findings` (`criterion_id, probe enum[5], result, location, note`). **6 schemas.** `run` → `verdict` via `$ref`.
 - **Fixtures** (`fixtures/`): `demo_run.json` (run `demo`, `PENDING`, `measured: false`, AC-1/AC-2 E0 stubs), `demo_traceability.json` (matching links). These **are the frontend's API** until backends land.
-- **Validator** (`scripts/validate_contracts.py`): validates the two pairs (`run↔demo_run`, `traceability↔demo_traceability`) with `$ref` store resolution; exit non-zero on failure. stdlib + `jsonschema` only.
+- **Validator** (`scripts/validate_contracts.py`): validates **5 pairs** (`run↔fixtures/demo_run.json`, `traceability↔fixtures/demo_traceability.json`, `criterion↔contracts/examples/criterion.json`, `exposure↔contracts/examples/exposure.json`, `findings↔contracts/examples/findings.json`) with `$ref` store resolution, plus a **coverage check** (`uncovered_schemas()`) that fails if any schema on disk has no pair — Convention 3 is now enforced, not just documented. stdlib + `jsonschema` only.
 - **Frontend** (`frontend/`, React 18 + Vite 6): `App.jsx` fetches live (`api.js: fetchRun/fetchMetrics`, graceful `null` on failure) then falls back to `fixtures.js` (mirrors `demo_run.json`); banner shows `(fixture mode)` when not live. Four components: `VerdictBadge` (green/red/orange), `EvidenceLadder` (E0–E6 counts), `TraceabilityMatrix` (criterion/verdict/tier/locations table), `ExposureCard` (rate or `unmeasured`, measured/fixture tag). Dev proxy (`vite.config.js`) forwards `/api` + `/webhooks` to `127.0.0.1:8000`. Production serving is via FastAPI static mount (subject to the §2 path defect).
 
 ## 11. Gaps (honest list — what "stub" actually means)
@@ -176,7 +176,8 @@ backend/app/metrics/false_certified.py
 backend/app/models/schemas.py
 backend/app/store/artifacts.py
 backend/tests/test_scaffold.py
-contracts/*.schema.json  fixtures/demo_*.json  scripts/validate_contracts.py
+contracts/*.schema.json  contracts/examples/*.json
+fixtures/demo_*.json  scripts/validate_contracts.py
 frontend/src/{App.jsx,main.jsx,api.js,fixtures.js,components/*}
 frontend/{index.html,package.json,vite.config.js}
 ```
@@ -312,3 +313,28 @@ Final state: **38/38 box-text lines sourced, M1–M16 in boxes, M17+M18 in the b
 22 boxes, render byte-identical across two runs, 79/79 pytest + validator green.** The
 audit that produced this is re-runnable — it is the `sourcing` check in the session, and
 it should be repeated whenever the figure or a module boundary changes.
+
+### 2026-09-27 — Session 18: M1 contracts — orphan schemas closed, findings added
+
+- **Purely additive.** No product code, no existing schemas, no fixtures, no CI config, no
+  `requirements.txt` touched. §11 is unchanged — all existing gaps remain open.
+- Added `contracts/findings.schema.json` (6th schema), `contracts/examples/` directory,
+  and three example files (`criterion.json`, `exposure.json`, `findings.json`).
+- Updated `scripts/validate_contracts.py`: PAIRS expanded from 2 to 5 entries (repo-relative
+  paths throughout); `FIXTURES` constant removed (now unused); file reads moved inside the
+  `try` block; `uncovered_schemas()` pure function added; `main()` calls it and fails if
+  any `.schema.json` on disk has no pair. Convention 3 is now enforced mechanically.
+- **§10 updated:** contracts bullet goes from 5 to 6 schemas and names `findings`; validator
+  bullet updated from 2 pairs to 5 pairs plus the coverage check; fixtures bullet unchanged.
+  §12 layout gains `contracts/examples/*.json`. §11 unchanged.
+- **Declared changes to existing lines (Convention 10):** `_validate_pair` in
+  `test_schemas_contracts.py` now resolves fixture_name against ROOT (not the old FIXTURES
+  constant, which is removed); the two `"OK demo_run.json"` stdout assertions in
+  `test_validator_script_exits_zero_as_ci_runs_it` updated to repo-relative form.
+- **Verdict orphan found:** `verdict.schema.json` was on disk with no direct PAIRS entry
+  (validated only via `run`'s `$ref`). The coverage check caught it; a 6th entry and
+  `contracts/examples/verdict.json` were added. PAIRS is now 6 entries, all 6 schemas
+  covered.
+- **Verified:** 6 OK lines + "OK 6/6 schemas covered" from validator; 89 pytest collected,
+  89 passed (79 pre-existing + 10 new) on Python 3.14.7 in isolated `/tmp/opencode/venv`.
+  3.14 is not the CI matrix (3.11 + 3.12) — one CI run still owed.
