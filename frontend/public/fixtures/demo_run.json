@@ -1,0 +1,7 @@
+{
+  "run_id": "demo",
+  "links": [
+    { "criterion_id": "AC-1", "locations": [], "evidence_tier": "E0" },
+    { "criterion_id": "AC-2", "locations": [], "evidence_tier": "E0" }
+  ]
+}

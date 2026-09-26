@@ -1,0 +1,21 @@
+{
+  "run_id": "demo",
+  "status": "PENDING",
+  "measured": false,
+  "verdicts": [
+    {
+      "criterion_id": "AC-1",
+      "verdict": "PENDING",
+      "evidence_tier": "E0",
+      "locations": [],
+      "rationale": "stub — gates not implemented yet"
+    },
+    {
+      "criterion_id": "AC-2",
+      "verdict": "PENDING",
+      "evidence_tier": "E0",
+      "locations": [],
+      "rationale": "stub — gates not implemented yet"
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "CriterionVerdict",
+  "type": "object",
+  "required": ["criterion_id", "verdict", "evidence_tier", "locations", "rationale"],
+  "properties": {
+    "criterion_id": { "type": "string" },
+    "verdict": { "enum": ["CERTIFIED", "CONDITIONAL", "REJECTED", "PENDING"] },
+    "evidence_tier": { "enum": ["E0", "E1", "E2", "E3", "E4", "E5", "E6"] },
+    "locations": { "type": "array", "items": { "type": "string" } },
+    "rationale": { "type": "string" }
+  }
+}

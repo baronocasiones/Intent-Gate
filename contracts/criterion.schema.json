@@ -1,0 +1,11 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Criterion",
+  "type": "object",
+  "required": ["criterion_id", "text", "testable"],
+  "properties": {
+    "criterion_id": { "type": "string" },
+    "text": { "type": "string" },
+    "testable": { "type": "boolean" }
+  }
+}
