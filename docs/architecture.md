@@ -99,7 +99,7 @@ No auth, no SSE/polling, no GitHub comment/check-run write-back yet (all were ol
 
 - All verification reasoning goes through `llm/watsonx_client.py::complete()`. No other model call sites exist.
 - `MOCK_LLM=true` selects `mock_client` (deterministic, zero spend). Live path without `WATSONX_API_KEY` fails loud with `RuntimeError` (fixture-backed fallback, never silent).
-- Hour-one spike still open: IAM token exchange + generation-endpoint call pattern + burn plan (carried from Session 6 open decisions, reworded watsonx-only in Session 10).
+- Hour-one spike: **research complete** as of 2026-09-27 — auth pattern, endpoint, structured-output mode, rate limiting, and the spend meter are recorded in `docs/watsonx-integration.md`. **Code not written:** the IAM token exchange (note: `expires_in` is 3600s, so the token cache must be TTL-aware) and the generation call remain `NotImplementedError`. Two spike items still need a provisioned account: the model id and the burn plan.
 
 ## 8. Read-only attestor (differentiator, as coded)
 
@@ -127,7 +127,7 @@ wired yet.
 1. `enqueue_run` never persists, never submits to `jobs` queue; `worker()` never started.
 2. `GET /api/runs*` and `GET /api/metrics` return hard-coded stubs; `db.get_db` / `write_artifact` have no callers.
 3. Gates return shape-correct stubs with empty payloads (`criteria: []`, `ast: []`, `findings: []`, `verdict: PENDING`).
-4. `watsonx_client.complete` is `NotImplementedError` past the key check — research spike pending.
+4. `watsonx_client.complete` is `NotImplementedError` past the key check — the integration pattern is now researched and specified in `docs/watsonx-integration.md`, but **no code has been written**.
 5. `assert_read_only` is test-only; pipeline never calls it.
 6. §2 `_dist` path defect (three-level climb, should be two).
 7. Missing vs spec: GitHub write-back (comments + check runs), review-debt ledger, risk-weighted exposure decay curve, signed cross-file hash chain, SSE/polling, auth, real demo-repo target.
@@ -193,3 +193,22 @@ frontend/{index.html,package.json,vite.config.js}
   been run, which is why the §2 `_dist` defect is unexercised.
 - §11 is unchanged — all gaps remain open. `modules.md` assigns each one an owner module
   (M1, M2, M10, M13, M15, M16, M17) rather than closing any.
+
+### 2026-09-27 — Session 15: watsonx.ai integration research (no code change)
+- Instruction: study watsonx.ai documentation and determine how it integrates into this system,
+  then document and commit.
+- **Docs-only.** No code, contracts, fixtures, dependencies, or endpoints touched. §11 is
+  unchanged — every gap in it is still open, including gap 4 (the client is still
+  `NotImplementedError`).
+- Two facts in this file were corrected because the research made them false or incomplete:
+  §7's "hour-one spike still open" (research is done, code is not) and §11 gap 4's framing
+  ("research spike pending" → pattern now specified, unimplemented).
+- Read `llm/watsonx_client.py`, `llm/mock_client.py`, `config.py`, `attestor/policy.py` and
+  `tests/test_llm.py` directly rather than working from this file — the stub is 20 lines and
+  the whole integration is one function behind a `RuntimeError` guard.
+- New record: `docs/watsonx-integration.md`. It also supplies the mechanism for **D6**
+  (`assert_read_only` is still test-only here, §8) by pointing at watsonx Orchestrate's
+  read-only tool filesystem as the pattern to imitate.
+- **Correction worth carrying:** an earlier claim in this session that the IAM access token
+  lasts 30 days and needs no refresh was wrong — `expires_in` is 3600s. A permanent token
+  cache would have passed every test in the suite and failed the live demo at minute 61.
