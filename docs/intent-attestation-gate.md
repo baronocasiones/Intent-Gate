@@ -27,16 +27,16 @@ Six stages:
 
 | # | Stage | Notes |
 |---|---|---|
-| 1 | Ingest | issue / spec / PRD / test matrix / diff — Bob reads PDF/DOCX/XLSX/images natively |
+| 1 | Ingest | issue / spec / PRD / test matrix / diff — watsonx.ai (the integrated LLM) reads PDF/DOCX/XLSX/images natively — bob.ai fully replaced |
 | 2 | Extract criteria | atomic acceptance criteria, quality-gated against ISO/IEC/IEEE 29148; unverifiable criteria rejected outright |
 | 3 | Parse deterministically | cucumber/gherkin → AST; **no model in the extraction loop** |
-| 4 | Verify in parallel | N independent `bob run` processes (one per criterion group) — Bob Shell has no native subagent fan-out |
+| 4 | Verify in parallel | N independent workers (one per criterion group), each calling watsonx.ai for LLM reasoning — fan-out is N OS processes, not model-invoked subagents |
 | 5 | Adjudicate | E0–E6 evidence ladder → CERTIFIED / CONDITIONAL / REJECTED |
 | 6 | Emit and gate | traceability matrix, signed verdict record, review-debt ledger, risk-weighted exposure; non-zero exit blocks merge |
 
 **Probe model (§3.2):** 5 static probes per criterion — `CODE_SEARCH`, `LOGIC_TRACE`, `STATE_CHECK`, `ERROR_PATH`, `ABSENCE_CHECK` — plus an adversarial pass across 7 failure classes (boundary · omission · contradiction · implicit · negative · concurrency). Taxonomy extracted from the MIT-licensed `attest` skill.
 
-**Governance by construction (§3.3) — the differentiator:** verifier runs under a Bob custom mode (`attestor`) granting read/subagent/skill/workflow and **withholding edit and execute entirely** — structurally incapable of modifying what it verifies. Answers the Delve-style "fabricated evidence" failure mode with architecture, not policy. Direct IBM read-only-custom-mode governance angle.
+**Governance by construction (§3.3) — the differentiator:** verifier runs under a read-only `attestor` policy granting read/subagent/skill/workflow and **withholding edit and execute entirely** — structurally incapable of modifying what it verifies — with all LLM reasoning via **watsonx.ai**. bob.ai is fully replaced: not the model, not the harness — no `bob run`, no Bob custom-mode syntax, no Bobcoins. Answers the Delve-style "fabricated evidence" failure mode with architecture, not policy. Direct IBM read-only-custom-mode governance angle.
 
 **Emitted artefacts (§3.4):** per-criterion verdict record · bidirectional traceability matrix · review-debt ledger · risk-weighted exposure (per repo/capability, decay curve) · signed hash-chained evidence record.
 
@@ -53,3 +53,27 @@ Six stages:
 - Adrian's proposal extracted (`pdftotext`) to `/tmp/opencode/ibm-bob.txt` and distilled into this record.
 - No design doc recreated (per user); this module record + the PDF are the sources until re-planning happens.
 - **Next:** re-plan scope/workstreams/conventions for the new idea (contracts, fixtures, architecture, demo repo all need rebuilding from scratch).
+
+### 2026-09-26 — Session 7: Figure 6 verification + patch
+- Verified `docs/Figure-6-System-Architecture.png` against this record via subagent (`subagent/coder`): all 6 stages covered (Ingest → Extract → Deterministic parse → Parallel verify → Adjudicate E0–E6 → Emit+gate), `attestor` mode correct (read/subagent/skill/workflow, edit+execute absent), Budget Governor metering, traceability/signer/ledger/exposure/receipt surfaces present.
+- **Gaps kept as-is (match original):** FALSE CERTIFIED RATE + 7 spec-mutation classes appear nowhere in the figure; fleet flags string says `--disable-subagents` while the attestor box grants `subagent` (footer note explains: N OS processes, not subagents).
+- **Patched via new generator** `gen_fig6_architecture.py` (repo root, stdlib + matplotlib only, fails loudly on overflow; output 1920×1400 RGBA): `THE CONSTRAINT` → padded pill callout above Budget Governor; meter note → dark-on-white 2 full lines above fleet box; `THE NUMBER` → padded pill callout above Review-Debt Ledger; layer-3 arrow moved into gaps; fleet flags right-aligned with padding. Original backed up at `/tmp/opencode/fig6-backup/Figure-6-System-Architecture-orig-2026-09-26.png`.
+- **Open:** user finds the diagram unclear — no per-module connecting lines (only left-gutter layer arrows; decomposition map, not data-flow). Proposed spine + numbered S1–S9 edge badges; pending user go (`add lines`).
+
+### 2026-09-26 — Session 9: watsonx.ai correction — edits landed (resolves Session 8 pending)
+- Admin correction applied per `/start` instruction: **bob.ai is NOT the integrated LLM — use watsonx.ai instead** (resolves the Session 8 "edits pending" entry below, kept for audit trail).
+- Updated Stage 1 (Ingest via watsonx.ai), Stage 4 (N workers calling watsonx.ai, not `bob run`), and §3.3 (read-only `attestor` policy + watsonx.ai for all LLM reasoning; Bob harness-only if retained, never the model).
+- `AGENTS.md` Bob-as-LLM references updated in the same session; Figure 6 generator (`gen_fig6_architecture.py`) + PNG flagged for the same correction, not yet regenerated.
+
+### 2026-09-26 — Session 8: LLM correction bob.ai → watsonx.ai (Start + End, edits pending)
+- `/start` executed with admin correction: **bob.ai is NOT the LLM to integrate — use watsonx.ai instead**. Target module confirmed as this record + `AGENTS.md` Bob-as-LLM references.
+- Flagged correction targets (no edits landed this session): Stage 1 "Bob reads PDF/DOCX...", Stage 4 "N independent `bob run` processes", §3.3 "Bob custom mode (`attestor`)", Session 7 log attestor/Budget Governor lines; `AGENTS.md` AI-runtime line, Conventions 7–8, `attestor` syntax-spike open decision.
+- Working interpretation for next session: **watsonx.ai = LLM backend for all verification reasoning; Bob (if retained) = agent shell/harness only, not the model**. Open question carried forward: is Bob still the harness or fully replaced by watsonx.ai?
+- Next: apply the approved rewrite (watsonx.ai as LLM backend, clarify Bob's remaining role if any) to this record + `AGENTS.md`, then continue re-planning.
+
+### 2026-09-26 — Session 10: fully replace bob.ai (not the model, not the harness)
+- User instruction: fully replace bob.ai. Supersedes the Session 9 "harness-only if retained" wording.
+- Body updated: Stage 1 (bob.ai fully replaced), §3.3 (no `bob run`, no Bob custom-mode syntax, no Bobcoins; all LLM reasoning via watsonx.ai). Stage 4 already clean (N workers calling watsonx.ai).
+- `AGENTS.md` runtime line, Convention 7, and open decisions stripped of Bob-harness/Bobcoins fallbacks; spend/burn plan is watsonx.ai only.
+- `gen_fig6_architecture.py` de-Bobbed (spend cap subtitle, N workers, attestor-policy flags, WATSONX_API_KEY, attestor-policy config) and Figure 6 PNG regenerated; prior PNG backed up to `/tmp/opencode/fig6-backup/`.
+- Untouched on purpose: historical session-log lines naming Bob (audit trail) and market-research dossiers describing the IBM Bob product as a competitor/channel.
