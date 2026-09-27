@@ -1592,6 +1592,13 @@ kept out of this file, per Session 19's precedent.
 - **Branch note:** `refactor` @ `1b5be27`, still not pushed; the `origin/refactor`
   divergence stands (`7f65009` has an identical tree to `a869622`, so the pending
   pull/merge is content-trivial — reconcile before push).
+- **Follow-up (same session, /end):** the divergence is gone with **no merge needed** —
+  the `m10-orchestrator` merge (`932ca68`) already carries `7f65009` in its ancestry, so
+  the `origin/refactor` tip is contained in HEAD: **ahead 12, behind 0** (verified via
+  rev-list count + `merge-base --is-ancestor`). `git fetch` fails on this machine (no
+  remote access), so the remote tip cannot be re-confirmed and **push is still pending**
+  — push `refactor` when the network allows; if rejected as non-fast-forward, fetch +
+  merge, re-run the suite gate, then push.
 
 ### 2026-09-27 — Session 25 (R4): M5/M6/M7-stub/M8/M9 landed (this session)
 - **Scope as user-confirmed at /start:** wait for M4 merge (done locally as `27ec711`,
