@@ -289,6 +289,22 @@ wired yet.
     (rule 8, Convention 6). M14 verified *around* it: 39/39 M14 tests green on
     3.11.9 + 3.12.14, validator exit 0 on both. Owners: M2 + M3.
 
+    **CLOSED 2026-09-27 (M15 core-slice session, branch `api-surface`, commit `5f6f5c6`).**
+    The fixture was right and the assertion was stale: `test_models_parity.py::
+    test_demo_traceability_fixture_loads_into_model` still pinned the pre-M2 stub fixture
+    (`E0` everywhere, empty `locations`) after PR #43 landed `E4`/`E2` + locations. Fixed
+    to the fixture's actual content — the fixture, not the test, is the truth. No fixture,
+    model, or contract was touched, and nothing was silenced.
+    **Ownership note:** `test_models_parity.py` is M3's file and the fixture is M2's, both
+    outside M15's ownership (`modules.md` §0.4); the guard was repaired inside the M15
+    session because a stale guard cannot be left red next to new work (rule 7/8,
+    Convention 6) and **M2 + M3 to review and adopt**, mirroring §11.14's phrasing. Any
+    later merge (M4-ingest) must keep this fix — the red was re-proven pre-existing on
+    parent `4b03c55`, so it will not announce itself as a merge conflict.
+    **Verified after the fix:** Windows `213 passed, 21 skipped (each with a stated
+    reason), 0 failed`; validator exit 0 (6/6). The 21 skips are M17's stated platform
+    skips in `test_policy.py`, not reds.
+
 ## 12. Monorepo layout (as on disk)
 
 ```

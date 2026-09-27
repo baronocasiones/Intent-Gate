@@ -823,18 +823,28 @@ the harness that would have written them is withdrawn, so the number stays
 `measured: false` until a data source is decided. **D15** owns the formal artifact shape.
 
 **Acceptance criteria**
-- [ ] A **mutation harness** that takes a real criterion, applies one operator, re-runs
-      the pipeline, and records the resulting verdict. This is what makes the metric
-      measured rather than asserted.
-- [ ] All 7 operators are exercised, reported per class. `by_operator` keys stay exactly
-      the `OPERATORS` tuple (a test pins them).
-- [ ] **The empty case stays honest:** `measured: false` with a `null` rate, never `0.0`
-      (rule 6, and 1.7). A pre-measurement dashboard must not imply a good number.
-- [ ] Output conforms to `exposure.schema.json`; add the missing validator pair (M1).
-- [ ] Corroborating ground truth (Stryker "Survived" mutants) is a **stretch**, not a
-      P0. Do not let it block the harness (**D5**).
-- [ ] Per-operator rates are reported, not just the pooled rate — the per-class spread is
-      the interesting result and the defensible one.
+- [ ] **WITHDRAWN 2026-09-27** (see banner) — ~~A **mutation harness** that takes a real
+      criterion, applies one operator, re-runs the pipeline, and records the resulting
+      verdict.~~ Out of the current architecture by user decision; the branch is deleted.
+      **Not a failure**, and not to be revived without a new decision.
+- [x] All 7 operators are reported per class and `by_operator` keys stay exactly the
+      `OPERATORS` tuple — `test_operators_are_exactly_the_seven_mutation_classes`. **The
+      "exercised" half is withdrawn** with the harness: no mutations are injected, so the
+      per-class numbers stay empty (`measured: false`) until a data source lands.
+- [x] **The empty case stays honest:** `measured: false` with a `null` rate, never `0.0`
+      (rule 6, and 1.7). A pre-measurement dashboard must not imply a good number —
+      `test_empty_input_is_unmeasured` + `test_empty_input_still_keys_all_seven_operators`,
+      and since M15 the endpoint is guarded by `test_api_metrics_unmeasured_by_default`.
+- [x] Output conforms to `exposure.schema.json`; the missing validator pair (M1) added —
+      `test_output_validates_against_exposure_contract`, and
+      `scripts/validate_contracts.py` reports **6/6** schemas covered.
+- [ ] **WITHDRAWN 2026-09-27** (see banner) — corroborating ground truth (Stryker
+      "Survived" mutants) was a **stretch**, not a P0, and was never to block the harness
+      (**D5**). With no harness it is **moot**, not pending.
+- [x] Per-operator rates are reported, not just the pooled rate — `by_operator` in the
+      output, pinned independent of the pooled math by
+      `test_per_operator_breakdown_is_independent`. The per-class spread is the
+      interesting result and the defensible one; values are empty until data exists.
 
 **Size:** M. **Needs:** M9, M14. **Risk:** medium — it depends on the pipeline running
 end-to-end, so it is effectively Wave 3. **Note:** Session 11 recommended adjudicate +
