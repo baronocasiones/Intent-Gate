@@ -4,12 +4,19 @@ Append-only module record for the project's test suite. Architecture context
 lives in `docs/architecture.md` (code-faithful) and `docs/intent-attestation-gate.md`
 (concept); this file records only how the suite is organized, run, and extended.
 
-Status: **scaffold + architecture-derived unit tests + M1 contracts guard** — 89 tests
-(79 pre-existing + 10 new in `test_schemas_contracts.py`). Last verified 2026-09-27 on
-Python **3.14.7** (isolated `/tmp/opencode/venv`, `PYTHONDONTWRITEBYTECODE=1 -p no:cacheprovider`).
-The 79-test baseline is green on 3.11.9 and 3.12.14 per Session 13 and Session 17 records.
-**3.14.7 is not the CI matrix (3.11 + 3.12) — one CI run is owed** for this session's 10
-new tests before they are trusted on the matrix.
+Status: **scaffold + architecture-derived unit tests + M1 contracts guard + M3 parity guard
+for all six contracts** — **118 tests** (79 pre-existing + 10 M1 + 21 M3 + 6 for the
+`Finding` mirror + 2 M1-mandated parametrizations). Last verified 2026-09-27 on **four**
+interpreters, not one: **3.10.21 · 3.11.9 · 3.12.14 · 3.14.7** — 118 passed on every
+leg, validator exit 0 on every leg, each from a **clean venv built from
+`backend/requirements.txt`** (the 3.11 leg is a fresh venv, not the polluted global
+pyenv env). Since the Session 21 follow-up the file pins all 23 transitive deps, so
+every leg installs the same stack — 3.11/3.12/3.14 byte-identical, 3.10 differing by
+exactly the four marked lines. 3.11 + 3.12 remain the CI matrix; 3.10 is the
+documented dependency floor and 3.14 is a deliberate forward-compatibility leg, and
+**both are green today but enforced by nothing** — widening `tests.yml` is a **decision
+owed**, not a fix (see Known gaps). 3.13 has no interpreter on this machine
+and is untested.
 
 ## Layout
 
@@ -98,6 +105,23 @@ the attestor box ↔ `test_policy.py`, the metering note ↔ `test_llm.py` /
 8. **A test that pins a value is not a test that pins a type.** Round-trip
    equality survives a de-typing (`dict[str, dict[str,int]]` → `dict`), so a
    claim about a *type* needs its own negative assertion.
+9. **Verify on every interpreter you have, not just the pin.** A single-version
+   run is a statement about one interpreter, and it hides version-specific facts
+   a multi-version run surfaces for free — 3.14 reported a
+   `DeprecationWarning` for `asyncio.iscoroutinefunction` in `test_pipeline.py`
+   (removal slated for **3.16**) that 3.10/3.11/3.12 could not report, and the
+   warning-count skew between 3.11 and the rest turned out to be a real
+   dependency-pinning defect (§ Known gaps). The `backend/.python-version` pin is
+   a *pyenv* convenience; it is not the support matrix, and treating it as one is
+   how a suite ends up "green" on a version nothing ships. Keep the matrix honest
+   by adding a version *when one is available on the machine*, not when someone
+   remembers.
+10. **An interpreter swap is not a test run until the pins are re-installed.** A
+    venv built from `requirements.txt` is the only way a leg is comparable;
+    a bare system interpreter silently tests whatever happens to be installed.
+    This is not hypothetical: the 3.11.9 leg initially resolved `starlette 1.0.0`
+    while the 3.12.14 venv resolved `1.7.0`, because `starlette` is transitive
+    and unpinned.
 
 ## Known gaps (not covered yet)
 
@@ -115,32 +139,77 @@ the attestor box ↔ `test_policy.py`, the metering note ↔ `test_llm.py` /
   for those two contracts are therefore tested with *constructed* values, not
   corpus data. This is M1's gap, not M3's — but it means the corpus and the
   mirrors are not yet cross-checked for those two shapes. Add the fixtures and
-  this becomes a real end-to-end check.
+  this becomes a real end-to-end check. The `Finding` mirror is **not** in this
+  state: it is checked against `contracts/examples/findings.json`, so it has a
+  corpus cross-check even without a fixture pair.
 - **The mirrors have no product callers** (`architecture.md` §11.10), so
   `test_models_parity.py` proves the *shapes* are faithful and nothing more. It
   cannot catch a gate that constructs a model wrongly — no gate does yet.
 - **CI is still unverified on GitHub.** Every number in this file is local
-  evidence from 3.11.9 / 3.12.14. The workflow has never run remotely, because
-  the branch has not been pushed.
-- **The enum regression guard is one layer short** (found 2026-09-27, Session 19).
-  `test_schemas_contracts.py` pins the **aliases** `Verdict` and `EvidenceTier`
-  via `typing.get_args`, and `test_models_parity.py` pins field **names** only —
-  so nothing asserts the models actually *use* those aliases. De-typing
-  `CriterionVerdict.evidence_tier`, `CriterionVerdict.verdict` or
-  `TraceabilityLink.evidence_tier` from its `Literal` to `str` passes all 100
-  tests. **The product code is correct today** — the models do reject
-  `evidence_tier="E9"` and `verdict="MAYBE"` with `ValidationError`; only the
-  guard is missing. Owner: M3 (the mirrors) or M17 (the suite); unassigned.
-- **A false claim in a test comment, left in place** (found 2026-09-27, Session 19).
-  `_contracts_by_file`'s docstring in `test_models_parity.py` says the file name
+  evidence from 3.10.21 / 3.11.9 / 3.12.14 / 3.14.7. The workflow has never run
+  remotely, because the branch has not been pushed.
+- **`requirements.txt` pins no transitive dependency, so CI is not reproducible**
+  (found 2026-09-27, Session 21, by comparing legs rather than trusting one).
+  The seven pins are all direct; **`starlette` arrives via fastapi and floats**.
+  Measured: the 3.11.9 machine environment had `starlette 1.0.0`, a fresh
+  `requirements.txt` install on 3.12.14 / 3.10 / 3.14 had **1.7.0**. The only
+  visible symptom was the `StarletteDeprecationWarning` appearing on three legs
+  and not the fourth — i.e. the warning-count *is* the canary. Every future CI
+  run resolves transitive versions afresh, so a green run is not evidence about
+  the same dependency set as last week's green run. Fix is a decision, not a
+  patch: add explicit transitive pins (or a lockfile) to `requirements.txt`.
+  **Worth doing before the branch is pushed**, because it is the difference
+  between a CI matrix that tests something repeatable and one that does not.
+  **CLOSED the same day (Session 21 follow-up, on explicit user instruction):**
+  `requirements.txt` now carries all 23 transitive pins under the unchanged 7
+  direct ones, with four `python_version` markers where pip genuinely diverges
+  (sub-3.11 backports + the `rpds-py` floor move). Proven by deleting every venv
+  and rebuilding clean on **3.10.21 / 3.11.9 / 3.12.14 / 3.14.7** from the file —
+  118 passed + validator exit 0 on each, 3.11/3.12/3.14 byte-identical,
+  3.10 differing by exactly the four marked lines. The 3.11 leg is now a **clean
+  venv**, not the polluted global pyenv env (which carries dozens of unrelated
+  packages and can never be a reference leg again). **Ownership note:**
+  `requirements.txt` is M17's file (`modules.md` §0.4); edited here on the user's
+  direct instruction, M17 to review and adopt. The leftover warning skew (13 on
+  3.14 vs 14 elsewhere) is **explained, not open**: it is PEP 649 — 3.14 defers
+  the `-> jsonschema.RefResolver` annotation at `test_schemas_contracts.py:35`,
+  so the deprecated attribute is never touched at `def` time there. Proven with
+  `/tmp/opencode/pep649_probe.py` (1 warning on 3.12, 0 on 3.14 for the identical
+  `def`); the annotation is never introspected and the runtime access at line 40
+  still warns everywhere. No action owed.
+- **The CI matrix (3.11 + 3.12) does not cover the versions this session verified.**
+  3.10 is the documented dependency floor (`docs/test-suite.md` Known gaps, carried
+  since Session 13) and 3.14 is where the `asyncio.iscoroutinefunction` removal
+  warning appeared. Both are green today, so the omission has cost nothing yet —
+  which is exactly why it is cheap to fix now and expensive later. 3.13 has no
+  interpreter on this machine and remains unverified. **Decision owed:** widen
+  `tests.yml`, or record 3.10/3.14 as "verified locally, not enforced".
+- **The enum regression guard is one layer short** (found 2026-09-27, Session 19;
+  **partly closed Session 21**). `test_schemas_contracts.py` pins the **aliases**
+  `Verdict` and `EvidenceTier` via `typing.get_args`, and `test_models_parity.py`
+  pinned field **names** only — so nothing asserted the models actually *use*
+  those aliases. De-typing `CriterionVerdict.evidence_tier`,
+  `CriterionVerdict.verdict` or `TraceabilityLink.evidence_tier` from its
+  `Literal` to `str` passed the whole suite. **Session 21 closed the same hole for
+  the fourth enum field, `Finding.probe`**, by adding
+  `test_finding_rejects_an_unknown_probe`, which pins the annotation *and* asserts
+  the runtime rejection. **The three original fields are still unguarded** — the
+  same one-line pattern applies to each, and the product code is correct today
+  (nonsense tiers/verdicts/probes are rejected with `ValidationError`). Owner: M3
+  (the mirrors) or M17 (the suite); unassigned. Left open rather than fixed here
+  because it predates this session and `modules.md` rule 10 routes pre-existing
+  findings to their owner.
+- **A false claim in a test comment — FIXED at Session 21.**
+  `_contracts_by_file`'s docstring in `test_models_parity.py` said the file name
   and the `title` "disagree for one contract" (`traceability.schema.json`). They
   disagree for **three**: also `run.schema.json` (`run` vs `RunRecord`) and
-  `verdict.schema.json` (`verdict` vs `CriterionVerdict`); only `criterion` and
-  `exposure` follow the stem convention. The code is correct — it keys by file
-  name properly — but the stated *rationale* for keeping two lookup helpers is
-  wrong, and acting on it ("only traceability is odd, so let me rename the other
-  two") would change contract file identity in M1's directory. Not fixed: this
-  session changed no code.
+  `verdict.schema.json` (`verdict` vs `CriterionVerdict`); only `criterion`,
+  `exposure` and `findings` follow the stem convention (case aside). The code was
+  always correct — it keys by file name properly — but the stated *rationale* for
+  keeping two lookup helpers was wrong, and acting on it ("only traceability is
+  odd, so let me rename the other two") would have changed contract file identity
+  in M1's directory. Recounted from source at Session 21 rather than trusting
+  Session 19's note; the note was right, the comment was not.
 
 ## CI
 
@@ -359,3 +428,99 @@ executed this workflow.
   title set.
 - Counts: "100 tests (79 + 21)" is preserved as the `tests`-branch record; **112**
   is the merged total. Historical entries not rewritten.
+
+### 2026-09-27 — Session 21: green the merged tree, then verify it on four interpreters
+- Instruction: *"analyze the code base, make sure that it pass the tests"*, extended to
+  *"verify the tests suite as well because it uses different python version instead of
+  sticking to 3.12.14"*. Two deliverables: make the merged tree green, and stop treating
+  one interpreter as the suite.
+- **The 3 red tests were one missing model.** M1's `contracts/findings.schema.json`
+  (title `Finding`) had no mirror, so the bijection and both coverage tests failed with
+  `KeyError: 'Finding'`. Per that test's own docstring the fix is to mirror the schema,
+  **not** to suppress the test, so the fix was product code: added `Probe` (5-value
+  `Literal`) and `Finding` to `backend/app/models/schemas.py` — M3-exclusive per
+  `modules.md` §0.4, so this was M3's file to fix, not a merge side-effect. Also
+  corrected the module docstring's "five draft-07 schemas" to **six**.
+  `Finding` deliberately has **no** `evidence_tier` (D1 unratified, and the contract's
+  own `description` forbids it), keeps `result` **unenumerated** (M7's vocabulary), and
+  has **no defaults** on any of its five required keys.
+- **A guard is not a guard until it has been seen failing** (Convention 7), so the new
+  mirror was mutation-tested: `/tmp/opencode/finding_guard_proof.py`, each mutation
+  applied to a **fresh throwaway copy** so the real tree was never written to.
+  **The first harness was broken and reported 7/7 killed — all false.** It passed bare
+  filenames to pytest, which exits **4** ("file or directory not found", "no tests ran"),
+  and `rc != 0` was being scored as a kill. Caught only because 7/7 contradicted a
+  prediction of 4 survivors. After fixing the paths and **adding a control run** (the
+  unmutated copy must pass, or every kill is meaningless), the true result was
+  **3/7 killed, 4 survived** — exactly the predicted gap. A collection-time
+  `ImportError` is also scored separately, because the module imports `Finding` by name
+  and that is a *stronger* kill than an assertion (Session 19's trap, inverted).
+- **The 4 survivors were real, and are now closed** — 6 new tests in
+  `test_models_parity.py`, 112 → **118**: `test_finding_roundtrip`,
+  `test_finding_accepts_the_contracts_own_example` (cross-checked against
+  `contracts/examples/findings.json`, so `Finding` is the one new-contract mirror with a
+  corpus check), `test_finding_requires_all_five_fields`, `test_finding_rejects_an_unknown_probe`
+  (Convention 8 — pins the annotation *and* the runtime rejection),
+  `test_finding_does_not_encode_d1_tier_semantics`, `test_finding_result_stays_unenumerated`.
+  Re-proven: **all 7 mutations now killed, 0 survivors**, plus 2 extra mutations proving
+  the bijection's *"only in models"* branch is independently live (a stray model is
+  caught by the assertion, not the import).
+- **Multi-version verification — the part the instruction actually added.** Every
+  interpreter on the machine was used, each with a venv built from the exact
+  `requirements.txt` pins (Convention 10):
+
+  | interpreter | pytest | validator | notes |
+  |---|---|---|---|
+  | 3.10.21 | 118 passed | exit 0 | documented dependency floor, **not in the matrix** |
+  | 3.11.9 | 118 passed | exit 0 | matrix leg 1 (global pyenv env) |
+  | 3.12.14 | 118 passed | exit 0 | matrix leg 2, matches `backend/.python-version` |
+  | 3.14.7 | 118 passed | exit 0 | forward-compat leg, **not in the matrix** |
+
+  **3.13 has no interpreter on this machine and is untested** — recorded, not glossed.
+- **Two findings came out of comparing legs, neither of which one version would show:**
+  1. **A real forward-compat defect, fixed.** 3.14 alone reported
+     `DeprecationWarning: 'asyncio.iscoroutinefunction' is deprecated and slated for
+     removal in Python 3.16` — and the source is **our own test code**,
+     `test_pipeline.py:69`, not a dependency. Swapped to `inspect.iscoroutinefunction`
+     (the documented replacement) after confirming the two cannot disagree here:
+     `jobs.worker` is a plain `async def` with no `markcoroutinefunction` decorator,
+     which is the only case where they differ. The §11.1 characterization is unchanged —
+     only the deprecated call is gone. 3.14 warnings 14 → 13, now matching 3.11.9.
+  2. **CI is not reproducible: no transitive dependency is pinned.** The warning *count*
+     differed (3.11.9 = 13, the other three = 14) and the only cause was
+     `StarletteDeprecationWarning`. Chasing it found the real defect: **`starlette` is
+     not in `requirements.txt`** — it arrives via fastapi and floats. The 3.11.9 machine
+     environment had **1.0.0**; fresh pinned installs on 3.12.14 / 3.10 / 3.14 had
+     **1.7.0**. So the "79 green on 3.11.9 and 3.12.14" every session record cites was
+     **two different dependency sets**, and the symptom was visible only as a warning
+     count. Each CI run re-resolves transitives, so consecutive green runs are not
+     evidence about the same stack. Fix is a **decision** (pin transitives or add a
+     lockfile), not a patch — recorded in Known gaps, not actioned.
+- **Pre-existing doc-vs-code correction.** `_contracts_by_file`'s docstring claimed the
+  file-name/`title` disagreement was **one** contract; it is **three** (`run`,
+  `traceability`, `verdict`; `criterion`, `exposure`, `findings` follow the stem
+  convention case-insensitively). Recounted from source rather than trusting Session
+  19's note — the note was right, the comment was not. Fixed, since this session is
+  already inside this M3-exclusive file. **This is the eighth documented instance of a doc
+  in this repo being wrong about the code.**
+- **Verification:** 118 passed + validator exit 0 on **all four** interpreters; repo tree
+  unpolluted (Convention 3) — `git status` shows only the 3 intended files, and every
+  `__pycache__`/`.pytest_cache` is gitignored. Remaining warnings are pre-existing and
+  unrelated: `jsonschema.RefResolver` (D10, deferred by decision),
+  `StarletteDeprecationWarning` (needs a dependency change = a decision), and
+  `httpx2`-related advice in starlette's own message text (`httpx2` is **not** installed
+  on any leg — the earlier `AGENTS.md` phrasing could be read as if it were).
+- **Convention 6 honoured:** the 3 red tests were fixed by adding the model the test
+  demanded. No test was weakened, skipped, or deleted to reach green, and the suite went
+  **up** (112 → 118) rather than down.
+- **Open, deliberately not actioned:** `§11.12`'s three original enum fields are still
+  unguarded (the pattern to close them is now in the file, one line each);
+  `requirements.txt` transitive pins; the CI matrix width decision; 3.13 unverified; and
+  the mirrors still have **zero product callers** (§11.10) — so none of this moves the
+  critical path. Wave 0 (**M1, M11, M12**) still gates Wave 1, and M1 was already built
+  at Session 18.
+- **Follow-up the same day (user instruction: do §11.14 now, defer §11.12):** the
+  transitive-pins decision is **taken and implemented** — `backend/requirements.txt`
+  now pins all 23 transitives (4 with `python_version` markers), proven by rebuilding
+  all four venvs from the file. The Known-gaps bullet above is closed; the §11.12
+  guards stay open pending the ownership question, exactly as instructed.

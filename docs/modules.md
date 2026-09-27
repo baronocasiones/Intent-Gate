@@ -369,6 +369,13 @@ without re-parsing JSON Schema. **Code:** `backend/app/models/schemas.py`.
 `TraceabilityMatrix`, `Exposure` — all inheriting a strict `ContractModel` base.
 Parity with all five contracts is asserted in **`test_models_parity.py`**, not
 `test_schemas_contracts.py` (see the deviation note below).
+**Completed 2026-09-27 (Session 21):** the sixth contract, `findings.schema.json`
+(title `Finding`, landed by M1 that day), had no mirror and was **blocking a green
+tree**. Added the `Probe` literal and `Finding` — **seven models, six contracts,
+parity 6/6** — and 6 tests. `Finding` has **no defaults** on its five required keys,
+keeps `result` **unenumerated** (M7's vocabulary), and carries **no `evidence_tier`**
+because D1 is unratified. **This brief reopened and re-closed within one session**;
+the count of "five contracts" above is the Session 18 figure, preserved as written.
 **Target interface:** keep existing model names and defaults —
 `test_schemas_contracts.py` pins them.
 
@@ -401,11 +408,12 @@ Parity with all five contracts is asserted in **`test_models_parity.py`**, not
   **self-invalidating**: if M1 ever promotes it to `traceability-link.schema.json`
   with a `title`, the test fails until the entry is deleted. **Request for M1:**
   promote it, so parity is a clean bijection.
-
 **Strictness — a decision, not a default.** All six models inherit
 `ContractModel` with `extra="forbid"`, making these models the **strict** in-process
-trust layer while `contracts/` stays the **permissive** interchange layer (none of
-the five sets `additionalProperties: false`). This matches the gate's fail-closed
+trust layer while `contracts/` stays the **permissive** interchange layer (none of the
+five sets `additionalProperties: false` — six as of Session 21). This matches the
+gate's fail-closed
+
 posture (rule 6: uncertainty resolves to *not certified*). It is pinned by
 `test_every_model_forbids_unknown_keys` so it cannot silently drift to `ignore`.
 **The stage chain is unaffected** — `pipeline.py` passes plain dicts and rule 3
@@ -1166,3 +1174,57 @@ record that you did.
   under the rule it was creating. The coverage check caught it — which is the check
   working, not a near-miss. Recorded here because the mistake was in the specification, and
   the log should not read as though the first pass got it right.
+
+### 2026-09-27 — Session 21: M3 reopened and re-closed — the `Finding` mirror
+
+Instruction: *"analyze the code base, make sure that it pass the tests"*, extended to verify
+the suite across Python versions rather than the pinned one. This session **implemented**
+M3's outstanding half, so per rule 10 the log lands here as well as in
+`docs/architecture.md` / `docs/test-suite.md`; the **verification-only** findings were
+kept out of this file, per Session 19's precedent.
+
+- **The gap this closed:** M1 shipped `contracts/findings.schema.json` (title `Finding`)
+  on 2026-09-27 with no mirror, which made `test_contract_model_parity_is_a_bijection`
+  and both coverage tests fail — **112 tests, 109 passing, tree red.** The parity test's
+  own docstring names the remedy (*"do not suppress it, mirror the schema"*), and
+  `modules.md` §0.4 makes `backend/app/models/schemas.py` **M3-exclusive**, so this was
+  M3's file to fix rather than a merge side-effect. Added `Probe` (5-value `Literal`) and
+  `Finding`. Parity **5/5 → 6/6**; mirrors **six → seven**; suite **112 → 118**.
+- **The three properties of `Finding` that are decisions, not defaults** — each written
+  into the model docstring and pinned by a test, because each one is a place where a
+  later session could "helpfully" diverge from the contract:
+  - **No `evidence_tier`**, because **D1 is unratified** and the contract's own
+    `description` forbids adding it. This is the sharpest case in the module: a
+    *helpful* addition would have encoded a ladder nobody has agreed, and nothing in the
+    suite would have complained. `test_finding_does_not_encode_d1_tier_semantics` now
+    makes the omission loud.
+  - **`result` stays unenumerated** — its vocabulary is **M7's** to define, not M1's or
+    M3's.
+  - **No defaults** on any of the five required keys, matching `Criterion`'s asymmetry
+    rather than `CriterionVerdict`'s: a probe defaulting `location`/`note` to `""` would
+    attest that something was examined when it was not.
+- **Two asymmetries in the M3 brief are now three-plus-one:** `TraceabilityLink` remains
+  the one *invented name* (the link object is declared inline, so it has no `title` to
+  join on) and the **`INLINE_MIRRORS` exception is still outstanding** — M1's request to
+  promote `traceability-link.schema.json` is unanswered, so parity is still not a clean
+  bijection. `Finding` did **not** add to that set: `findings`/`Finding` agrees
+  case-insensitively, so the filename/`title` disagreements stay at **three**
+  (`run`, `traceability`, `verdict`) — recounted from source, not taken on trust.
+- **Proven, not asserted:** 9 mutations against fresh throwaway copies. The **first
+  harness was broken and reported 7/7 killed — all false** (bare filenames make pytest exit
+  4, and `rc != 0` scored as a kill). Only a **control run** and reading *which* test
+  died exposed it; the true baseline was 3/7 with 4 real survivors, all now closed and
+  re-proven 7/7.
+- **AC 1 note:** still ticked, and now true for the sixth contract as well. AC 3 ("literals
+  stay in sync with the schema enums") extends to `Probe`, whose enum-sync check lives in
+  `test_schemas_contracts.py::FIVE_PROBES` while its **wiring** check lives here — the
+  two are deliberately in different files, which is what let the wiring go unguarded until
+  this session.
+- **M3 is still not load-bearing** (`architecture.md` §11.10): the mirrors have **zero
+  product callers**, so this session made the *shapes* trustworthy and nothing more. The
+  two strictness obligations (artifact-envelope projection, M9's superset record) are
+  untouched and remain M9/M14's.
+- **Owed, not done:** §11.12's three original enum fields are still unguarded; nothing
+  in this session widens the support matrix (that is M17's file, §0.4); and `requirements.txt`
+  still pins no transitive dependency, so **no leg of this verification is reproducible**
+  until M17 decides on pins or a lockfile.

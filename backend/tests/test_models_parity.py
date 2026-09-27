@@ -27,6 +27,8 @@ from app.models.schemas import (
     Criterion,
     CriterionVerdict,
     Exposure,
+    Finding,
+    Probe,
     RunRecord,
     TraceabilityLink,
     TraceabilityMatrix,
@@ -53,9 +55,13 @@ def _contract_titles() -> dict[str, dict]:
 def _contracts_by_file() -> dict[str, dict]:
     """Contract file name -> the schema itself.
 
-    Note the file name and the `title` disagree for one contract
-    (`traceability.schema.json` has `title: TraceabilityMatrix`), so the two
-    lookups below are deliberately separate.
+    The file name and the `title` disagree for three of the six contracts --
+    `run`/`RunRecord`, `traceability`/`TraceabilityMatrix` and
+    `verdict`/`CriterionVerdict`. (`criterion`, `exposure` and `findings` differ
+    only in case.) So the two lookups below are deliberately separate: one joins
+    on the `title`, which is the parity key, and this one addresses contracts by
+    the name on disk. Do not "tidy" this by renaming -- `contracts/` is M1's
+    alone, and the file name is contract identity.
     """
     return {
         path.name: json.loads(path.read_text())
@@ -189,6 +195,100 @@ def test_criterion_requires_all_three_fields():
     ):
         with pytest.raises(ValidationError):
             Criterion(**incomplete)
+
+
+def test_finding_roundtrip():
+    f = Finding(
+        criterion_id="AC-2",
+        probe="ERROR_PATH",
+        result="refuted",
+        location="src/refund.py:88",
+        note="no retry path",
+    )
+    assert Finding(**f.model_dump()) == f
+
+
+def test_finding_accepts_the_contracts_own_example():
+    """Cross-check the mirror against corpus data, not just constructed values.
+
+    `contracts/examples/findings.json` is the value the validator gate checks,
+    so the example -- not a hand-written literal -- is what the mirror has to
+    survive. Only `criterion` and `exposure` still lack a fixture pair
+    (docs/test-suite.md, Known gaps).
+    """
+    example = json.loads((ROOT / "contracts" / "examples" / "findings.json").read_text())
+    assert Finding(**example).model_dump() == example
+
+
+def test_finding_requires_all_five_fields():
+    """No defaults, for the same reason `Criterion` has none.
+
+    A probe that defaulted its `note` or `location` to "" would attest that
+    something was examined when it was not. All five keys are in the contract's
+    `required`, so every one of them is the finding's identity.
+    """
+    full = {
+        "criterion_id": "AC-1",
+        "probe": "CODE_SEARCH",
+        "result": "confirmed",
+        "location": "src/refund.py:88",
+        "note": "found",
+    }
+    for dropped in full:
+        with pytest.raises(ValidationError):
+            Finding(**{k: v for k, v in full.items() if k != dropped})
+
+
+def test_finding_rejects_an_unknown_probe():
+    """Negative assertion, per Convention 8 -- a round trip cannot catch this.
+
+    A finding attributed to a probe nobody ran is a fabricated evidence
+    location, so the enum has to bite. The alias contents themselves are pinned
+    to the contract enum by `test_schemas_contracts.py::FIVE_PROBES`; this pins
+    the other half of the pair -- that the field actually *uses* the alias --
+    which is the wiring `architecture.md` 11.12 records as unguarded for
+    `Verdict` / `EvidenceTier`. Re-typing `probe` to `str` fails both.
+    """
+    assert Finding.model_fields["probe"].annotation is Probe
+
+    with pytest.raises(ValidationError):
+        Finding(
+            criterion_id="AC-1",
+            probe="TELEPATHY",  # not one of the five
+            result="confirmed",
+            location="src/refund.py:88",
+            note="found",
+        )
+
+
+def test_finding_does_not_encode_d1_tier_semantics():
+    """D1 is unratified, so no tier may appear on the mirror (rule 6, fail-closed).
+
+    `contracts/findings.schema.json` says in its own `description` that a tier
+    is *expected* alongside a finding but must NOT be added until the E0-E6
+    ladder is decided. That instruction had no mechanical guard: adding
+    `evidence_tier` to this model kept the whole suite green while the mirror
+    silently started encoding a ladder nobody has ratified. This pins the
+    absence, so the failure lands on whoever tries.
+
+    If D1 is ratified, delete this test in the same change that adds the tier --
+    do not quietly widen the allowance.
+    """
+    assert "evidence_tier" not in Finding.model_fields, (
+        "D1 is unratified -- Finding must not carry a tier. Ratify D1 first, then "
+        "add it to contracts/findings.schema.json and delete this test."
+    )
+
+
+def test_finding_result_stays_unenumerated():
+    """`result`'s vocabulary belongs to M7, not to M1 or M3.
+
+    The contract declares `result` a bare string on purpose, and enumerating it
+    here would let the mirror invent a vocabulary no contract ratified. When M7
+    agrees one, M3 changes in the same commit and this test flips deliberately
+    (docs/test-suite.md Convention 4).
+    """
+    assert Finding.model_fields["result"].annotation is str
 
 
 def test_traceability_matrix_roundtrip():
