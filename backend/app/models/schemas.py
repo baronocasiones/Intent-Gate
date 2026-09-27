@@ -59,6 +59,39 @@ class Criterion(ContractModel):
     testable: bool
 
 
+class Finding(ContractModel):
+    """contracts/findings.schema.json — one probe result against one criterion.
+
+    Produced by M7 (verify), consumed by M8 (adjudicate). Two fields are
+    deliberately shaped to preserve non-decisions that are NOT M3's to make, and
+    both are pinned by `test_schemas_contracts.py` so they cannot be widened here
+    quietly either:
+
+    * `result` is a bare `str`. The contract leaves it unenumerated on purpose —
+      the vocabulary of probe outcomes belongs to the verification stage, not to
+      the contract layer. Narrowing it in this mirror would smuggle a decision
+      into the strict layer that the permissive layer deliberately defers.
+    * `evidence_tier` is ABSENT. The E0-E6 ladder is named in the source and
+      never defined there, so it is decision D1; the contract forbids declaring
+      it. D1 has since been ratified (docs/modules.md 1.4), but the tier is
+      derived by M8 from which probe ran, not carried on the finding — so this
+      mirror still has no field for it. If M1 ever adds `evidence_tier` to the
+      contract, M3 must add it here or M7's output will be rejected by its own
+      strict mirror, which is the intended direction of failure (loud, not
+      silent).
+
+    `probe` IS enumerated: the five names are settled by the source and pinned
+    by `test_findings_probe_enum_is_the_five_named_probes`, so the literal
+    cannot drift from the contract.
+    """
+
+    criterion_id: str
+    probe: Literal["CODE_SEARCH", "LOGIC_TRACE", "STATE_CHECK", "ERROR_PATH", "ABSENCE_CHECK"]
+    result: str
+    location: str
+    note: str
+
+
 class CriterionVerdict(ContractModel):
     criterion_id: str
     verdict: Verdict

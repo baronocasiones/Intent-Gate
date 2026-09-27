@@ -15,6 +15,7 @@ for the three new models, the strictness pin, and the honesty pin.
 """
 import inspect
 import json
+import typing
 from pathlib import Path
 
 import pytest
@@ -27,6 +28,7 @@ from app.models.schemas import (
     Criterion,
     CriterionVerdict,
     Exposure,
+    Finding,
     RunRecord,
     TraceabilityLink,
     TraceabilityMatrix,
@@ -72,8 +74,33 @@ def _mirrors() -> dict[str, type[BaseModel]]:
     }
 
 
+def _contract_properties(title: str) -> dict:
+    """The `properties` object a mirror must reproduce — titled contract, or the
+    inline object an INLINE_MIRRORS entry points at.
+
+    Three guards need this and none should re-derive it: getting the inline
+    lookup subtly wrong makes a guard vacuously true, which is the worst failure
+    a guard has.
+    """
+    if title in INLINE_MIRRORS:
+        schema_file, path = INLINE_MIRRORS[title]
+        item = _contracts_by_file()[schema_file]
+        for part in path:
+            # A segment names a field (so look inside `properties`) unless the
+            # schema has no `properties` of its own — then it is a plain key,
+            # e.g. an array's `items`.
+            item = item["properties"][part] if part in item.get("properties", {}) else item[part]
+        return item["properties"]
+    return _contract_titles()[title]["properties"]
+
+
 CONTRACT_TITLES = sorted(_contract_titles())
 MIRROR_NAMES = sorted(_mirrors())
+# Every mirror a structural guard must cover: the six titled contracts plus the
+# one inline exception. Parametrising over CONTRACT_TITLES alone would silently
+# skip `TraceabilityLink`, whose `evidence_tier` enum is then unchecked — the
+# guards below are only as good as the set they run over.
+ALL_MIRRORS = sorted(set(CONTRACT_TITLES) | {"TraceabilityLink"})
 
 # The one mirror with no `title` to join on: `traceability.schema.json` declares
 # the link object *inline* under `properties.links.items`, so it has no schema
@@ -151,6 +178,111 @@ def test_required_contract_fields_are_model_fields(title):
     assert not missing, f"{title} contract requires {sorted(missing)}, absent from the model"
 
 
+@pytest.mark.parametrize("title", ALL_MIRRORS)
+def test_mirror_declares_no_field_its_contract_does_not(title):
+    """The other direction, and the one that was missing.
+
+    `test_model_fields_cover_contract_properties` asserts `contract ⊆ model`.
+    That permits a model to carry a field no contract declares — and a mutation
+    battery showed that hole was live: adding `evidence_tier` to the `Finding`
+    mirror, a key `findings.schema.json` deliberately does not declare, failed
+    nothing. So the strict layer could accept a tier the interchange layer never
+    validated, which is precisely the inversion the module docstring warns about
+    ("contracts are permissive, models are strict" — strict about the contract's
+    shape, not about inventing its own).
+
+    Equality is the correct relation here, not superset. It holds for all six
+    mirrors today, and a model-only convenience field has a correct route: add
+    it to the contract (M1 owns `contracts/`) and the mirror picks it up on both
+    sides at once. Anything else means the strict layer decided something the
+    contract layer did not.
+    """
+    declared = set(_contract_properties(title))
+    extra = set(_mirrors()[title].model_fields) - declared
+    assert not extra, (
+        f"{title} declares {sorted(extra)}, which its contract does not. A model-only "
+        f"field is unvalidated at the interchange layer — add it to the contract instead."
+    )
+
+
+@pytest.mark.parametrize("title", ALL_MIRRORS)
+def test_mirror_field_types_are_the_contract_field_types(title):
+    """The model's *types* are the contract's types, not merely its field names.
+
+    The two structural guards above check which fields exist. Nothing checked
+    what they are typed as, and a mutation battery found the gap live: narrowing
+    `Finding.probe` from five probes to four, while `findings.schema.json` still
+    declared five, failed no test at all. M7a would then have had its
+    `ERROR_PATH` findings rejected by their own mirror — a loud failure, so not
+    dangerous, but pure drift with nothing watching it.
+
+    Round-trip tests cannot catch this class of change (test-suite.md
+    Convention 8: a test that pins a value is not a test that pins a type). A
+    narrower Literal still round-trips every value the existing tests happen to
+    use. So this asserts on the annotation itself:
+
+      * a field the contract declares with an `enum` must be a `Literal` with
+        exactly those members, in that order;
+      * a field the contract declares as a bare `"string"` must be annotated
+        `str` — which is also what keeps a contract's *unenumerated* string
+        unenumerated in the mirror, the failure behind
+        `test_finding_result_is_not_narrowed_to_a_vocabulary_the_contract_defers`.
+
+    Deliberately scoped to those two cases. Array, object, boolean and nullable
+    fields are left alone: the models type some of those more specifically than
+    the contract does on purpose (`Exposure.by_operator`), and a
+    contract ⊆ model relation is the correct stance there, not equality.
+    """
+    model = _mirrors()[title]
+    for field, spec in _contract_properties(title).items():
+        annotation = model.model_fields[field].annotation
+        where = f"{title}.{field}"
+        if "enum" in spec:
+            expected = tuple(spec["enum"])
+            assert typing.get_origin(annotation) is typing.Literal, (
+                f"{where} is annotated {annotation!r}, but its contract enumerates "
+                f"{list(expected)} — a mirror may not be vaguer than its contract"
+            )
+            assert typing.get_args(annotation) == expected, (
+                f"{where} allows {list(typing.get_args(annotation))}, its contract "
+                f"allows {list(expected)}"
+            )
+        elif spec.get("type") == "string":
+            assert annotation is str, (
+                f"{where} is annotated {annotation!r}, not str. Where the contract "
+                f"declares a bare string the mirror must not narrow it into a "
+                f"vocabulary the contract layer left open."
+            )
+
+
+def test_finding_result_is_not_narrowed_to_a_vocabulary_the_contract_defers():
+    """`result` is unenumerated in the contract on purpose; the strict layer must
+    not quietly decide it.
+
+    Widening `result`'s vocabulary is M7's call, not the contract layer's, and
+    the model is a *mirror*. A mutation battery showed that narrowing
+    `Finding.result` to `Literal["refuted", "supported"]` failed no test: the
+    round-trip tests still passed, because a narrower type still round-trips
+    every value they happened to use.
+
+    Asserted on the annotation rather than on behaviour, for the reason in
+    docs/test-suite.md Convention 8 — a test that pins a value is not a test
+    that pins a type, and a narrowed Literal is a type change that round-trip
+    equality cannot see. `test_mirror_field_types_are_the_contract_field_types`
+    now covers this generically; this test stays because it is the assertion
+    that carries the *reason*, and a comment is not a guard.
+    """
+    annotation = Finding.model_fields["result"].annotation
+    assert annotation is str, (
+        f"Finding.result is annotated {annotation!r}, not str. The contract "
+        f"deliberately leaves this vocabulary unenumerated; deciding it in the "
+        f"strict layer is M7's call made in the wrong place."
+    )
+    # ...and the contract half of the same non-decision, so the two are pinned together.
+    schema = _contracts_by_file()["findings.schema.json"]
+    assert "enum" not in schema["properties"]["result"]
+
+
 def test_every_model_forbids_unknown_keys():
     """The strictness is a design position, not a default that may drift.
 
@@ -189,6 +321,99 @@ def test_criterion_requires_all_three_fields():
     ):
         with pytest.raises(ValidationError):
             Criterion(**incomplete)
+
+
+def test_finding_loads_the_contract_example():
+    """Real data through the mirror, not just a shape check.
+
+    The three parity guards above prove `Finding`'s fields and types match the
+    contract. None of them proves it can be *constructed*. `contracts/examples/
+    findings.json` was only ever validated by `jsonschema` against the contract —
+    never loaded into the model — so the mirror added in Session 21 was never
+    exercised against real data. A model that cannot be constructed is
+    decoration, and the M3 docstring promises round trips for the new models.
+    """
+    data = json.loads((ROOT / "contracts" / "examples" / "findings.json").read_text())
+    finding = Finding(**data)
+    assert finding.criterion_id == "AC-2"
+    assert finding.probe == "ERROR_PATH"
+    assert finding.result == "refuted"
+    assert finding.location == "src/refund.py:88"
+    assert finding.note == "no retry path"
+
+
+def test_finding_roundtrip():
+    f = Finding(
+        criterion_id="AC-1",
+        probe="LOGIC_TRACE",
+        result="supported",
+        location="src/refund.py:64",
+        note="approval guard precedes capture",
+    )
+    assert Finding(**f.model_dump()) == f
+    assert json.loads(f.model_dump_json()) == f.model_dump()
+
+
+def test_finding_requires_all_five_fields():
+    """No defaults, for the same reason `Criterion` has none.
+
+    A missing `location` is not a finding — M7's own acceptance criteria call a
+    finding with no location inadmissible evidence, so a default of `""` here
+    would let an unlocated probe result validate as a well-formed one.
+    """
+    complete = {
+        "criterion_id": "AC-1",
+        "probe": "CODE_SEARCH",
+        "result": "supported",
+        "location": "src/refund.py:1",
+        "note": "x",
+    }
+    assert Finding(**complete).location == "src/refund.py:1"
+    for dropped in complete:
+        incomplete = {k: v for k, v in complete.items() if k != dropped}
+        with pytest.raises(ValidationError):
+            Finding(**incomplete)
+
+
+def test_finding_rejects_a_probe_outside_the_five():
+    with pytest.raises(ValidationError):
+        Finding(
+            criterion_id="AC-1",
+            probe="VIBE_CHECK",
+            result="supported",
+            location="src/refund.py:1",
+            note="x",
+        )
+
+
+def test_finding_result_stays_an_open_string_and_the_example_uses_a_documented_value():
+    """Two halves of the same non-decision, pinned together.
+
+    The model half (`result` is a bare `str`, not a narrowed Literal) is asserted
+    by `test_finding_result_is_not_narrowed_to_a_vocabulary_the_contract_defers`.
+    This asserts the *documented* vocabulary is real rather than aspirational:
+    the contract's own example must use one of the four values
+    `docs/modules.md` 1.8.1 names. If M7 later introduces a fifth, this fails
+    and the doc has to be updated with it — which is the point. M7 owns the
+    vocabulary (its schema says so) and will define it as a module constant;
+    until that lands this is the only mechanical anchor it has.
+    """
+    documented = {"refuted", "supported", "undetermined", "not_applicable"}
+    data = json.loads((ROOT / "contracts" / "examples" / "findings.json").read_text())
+    assert data["result"] in documented, (
+        f"contracts/examples/findings.json uses result={data['result']!r}, which is "
+        f"not one of the four values docs/modules.md 1.8.1 documents"
+    )
+    # ...and the mirror accepts all four, because its type is the open string the
+    # contract specifies rather than a copy of the list.
+    for value in documented:
+        assert Finding(
+            criterion_id="AC-1",
+            probe="CODE_SEARCH",
+            result=value,
+            location="src/refund.py:1",
+            note="x",
+        ).result == value
 
 
 def test_traceability_matrix_roundtrip():
@@ -278,9 +503,36 @@ def test_exposure_accepts_metric_function_output():
 
 
 def test_demo_traceability_fixture_loads_into_model():
+    """Flipped 2026-09-27: assert the two copies of the demo run AGREE, rather
+    than re-pinning M2's literals.
+
+    This test asserted every link was `E0` with no locations — the all-stub
+    matrix that predated Session 19 — written on a branch still holding the old
+    fixture. M2 rewrote both fixtures to a real mixed run (AC-1 CERTIFIED/E4,
+    AC-2 REJECTED/E2, both located) and correctly flipped its own guard in
+    `test_schemas_contracts.py`, but not this one. The assertion was stale; the
+    fixture was right. Convention 7 is the case where a guard is not flipped in
+    the same change as the behaviour it pins.
+
+    Cross-checking against `demo_run.json` is the shape
+    `test_schemas_contracts.py::test_traceability_fixture_describes_the_same_run_as_the_run_fixture`
+    already uses, and it is what makes this guard unable to go stale the same way
+    twice: a future fixture rewrite moves both files together or fails here.
+    """
+    run = json.loads((ROOT / "fixtures" / "demo_run.json").read_text())
     data = json.loads((ROOT / "fixtures" / "demo_traceability.json").read_text())
     matrix = TraceabilityMatrix(**data)
-    assert matrix.run_id == "demo"
+    assert matrix.run_id == run["run_id"] == "demo"
     assert [link.criterion_id for link in matrix.links] == ["AC-1", "AC-2"]
-    assert all(link.evidence_tier == "E0" for link in matrix.links)
-    assert all(link.locations == [] for link in matrix.links)
+
+    by_criterion = {v["criterion_id"]: v for v in run["verdicts"]}
+    for link in matrix.links:
+        verdict = by_criterion[link.criterion_id]
+        assert link.evidence_tier == verdict["evidence_tier"]
+        assert link.locations == verdict["locations"]
+
+    # Agreement alone would be satisfied by two identical stubs, which is the
+    # state this test previously pinned. These two lines are the property M2
+    # actually landed: a real matrix, with a tier above E0 and real locations.
+    assert any(link.evidence_tier != "E0" for link in matrix.links)
+    assert all(link.locations for link in matrix.links)
