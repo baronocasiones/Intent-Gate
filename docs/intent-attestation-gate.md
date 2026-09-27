@@ -38,6 +38,23 @@ Six stages:
 
 **Governance by construction (§3.3) — the differentiator:** verifier runs under a read-only `attestor` policy granting read/subagent/skill/workflow and **withholding edit and execute entirely** — structurally incapable of modifying what it verifies — with all LLM reasoning via **watsonx.ai**. bob.ai is fully replaced: not the model, not the harness — no `bob run`, no Bob custom-mode syntax, no Bobcoins. Answers the Delve-style "fabricated evidence" failure mode with architecture, not policy. Direct IBM read-only-custom-mode governance angle.
 
+> **Amended Session 20 (M12) — read this before pitching §3.3.** The grant set is now
+> `HARNESS_GROUPS | OS_PROPERTIES` and includes a fifth token, **`llm_egress`**, because each M7b
+> worker calls watsonx.ai itself rather than delegating reasoning to a parent process. Two
+> consequences the pitch must not paper over:
+> - The workspace is now genuinely unwritable, and that is *proved* rather than asserted —
+>   `sandbox.py` attempts the forbidden write and records the kernel's own refusal
+>   (`EROFS`/`EACCES`) into the run record. "Structurally incapable" is now architecture with
+>   evidence attached, which is a stronger claim than the one this paragraph originally made.
+> - But `llm_egress` is currently **declared and enforced by nothing**: the allowlist that would
+>   pin it to watsonx.ai does not exist yet, so a worker holding it has open egress. A blanket
+>   `network` grant was rejected for exactly this reason — open egress would let a worker
+>   exfiltrate the very source it reads, which is the claim itself. Do not describe the
+>   destination as restricted until M10's allowlist lands.
+>
+> Also still true of this paragraph: enforcement is not live. `enforce_worker_read_only()` has
+> zero callers; the worker-startup call is M7/M10's and the `attestor_policy` record key is M9's.
+
 **Emitted artefacts (§3.4):** per-criterion verdict record · bidirectional traceability matrix · review-debt ledger · risk-weighted exposure (per repo/capability, decay curve) · signed hash-chained evidence record.
 
 **Publishable metric (§3.5):** `FALSE CERTIFIED RATE = P(CERTIFIED | spec violation present)` — measured by injecting known defect operators into real acceptance criteria, reported per operator class across 7 spec-mutation classes (boundary drop, comparison inversion, threshold weakening, error-path deletion, normative demotion, negative-constraint removal, untestability). Corroborating ground truth: Stryker "Survived" mutants. The claim: publish a metric the existing leaderboard structurally cannot contain.
@@ -80,7 +97,7 @@ Six stages:
 
 ### 2026-09-27 — Session 11: frontend + backend file scaffold (branch `baron`, commit `617a134`)
 - `/start` goal: setup the file scaffold for frontend and backend. Zero code existed; scaffold-only, no gate logic implemented.
-- **Backend (`backend/`, FastAPI modular monolith, 33 files):** `app/main.py` (serves API + built Vite `dist/` when present), `config.py`, `db.py` (SQLite WAL), `routers/` (`webhooks.py` POST /webhooks/github with injected-payload fallback, `runs.py` GET /api/runs + /{id}, `metrics.py` GET /api/metrics), `orchestrator/` (`pipeline.py` 6-stage chain, `jobs.py` asyncio queue), `gates/` (6 fixture-shaped stubs: ingest/extract/parse/verify/adjudicate/emit), `models/schemas.py` (Pydantic mirrors `contracts/`), `store/artifacts.py` (hash-chained JSON), `llm/` (`watsonx_client.py` spike target + `mock_client.py` zero-spend fallback), `attestor/policy.py` (GRANTS read/subagent/skill/workflow, DENIES edit/execute + assert), `metrics/false_certified.py` (7 operators + rate fn), `tests/test_scaffold.py`, `requirements.txt`, `.env.example`.
+- **Backend (`backend/`, FastAPI modular monolith, 33 files):** `app/main.py` (serves API + built Vite `dist/` when present), `config.py`, `db.py` (SQLite WAL), `routers/` (`webhooks.py` POST /webhooks/github with injected-payload fallback, `runs.py` GET /api/runs + /{id}, `metrics.py` GET /api/metrics), `orchestrator/` (`pipeline.py` 6-stage chain, `jobs.py` asyncio queue), `gates/` (6 fixture-shaped stubs: ingest/extract/parse/verify/adjudicate/emit), `models/schemas.py` (Pydantic mirrors `contracts/`), `store/artifacts.py` (hash-chained JSON), `llm/` (`watsonx_client.py` spike target + `mock_client.py` zero-spend fallback), `attestor/policy.py` (GRANTS read/subagent/skill/workflow **+ `llm_egress` since Session 20**, DENIES edit/execute + assert, worker-startup gate) and `attestor/sandbox.py` (**new in Session 20** — proves the workspace is read-only by attempting the forbidden write), `metrics/false_certified.py` (7 operators + rate fn), `tests/test_scaffold.py`, `requirements.txt`, `.env.example`.
 - **Frontend (`frontend/`, React+Vite, 12 files):** `package.json` (react 18, vite 6 — not yet `npm install`ed), `vite.config.js` (API proxy → :8000), `App.jsx` (live-API first, fixture fallback + fixture-mode badge), `api.js`, `fixtures.js`, 4 components (VerdictBadge, TraceabilityMatrix, EvidenceLadder, ExposureCard), `public/fixtures/demo_run.json`.
 - **Contracts/fixtures/scripts:** 6 schemas (`contracts/`: run, verdict, criterion, traceability, exposure, findings), 4 examples (`contracts/examples/`: verdict, criterion, exposure, findings) + 2 fixtures (`demo_run`, `demo_traceability`), `scripts/validate_contracts.py` (stdlib + jsonschema only).
 - **Verified green:** `pytest backend/tests` 3 passed; validator OK ×2; pipeline stub returns `exit_code: 1` (gate blocks by default); FastAPI import OK.

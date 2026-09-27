@@ -311,9 +311,20 @@ def test_findings_result_is_unenumerated_and_tier_is_not_required():
 
     Widening `result`'s vocabulary is M7's call — the set of valid result
     strings belongs to the verification stage, not to the contract layer.
-    Adding `evidence_tier` to required or properties is D1's call — the
-    E0-E6 ladder is undefined in the source and must not be hard-coded here
-    until D1 is ratified.
+
+    Adding `evidence_tier` to required or properties was D1's call. **D1 is now
+    ratified** (docs/modules.md 1.4, this session), so the original reason for
+    this guard — "the E0-E6 ladder is undefined in the source" — no longer holds,
+    and the guard would otherwise read as a claim that D1 is still open. It
+    survives on different and better grounds: the tier is derived by **M8 from
+    which probe ran**, not carried on the finding. A finding states what a probe
+    observed; a verdict states how far the evidence reached. So the honest
+    contract for `findings` still has no tier field, and this assertion is now
+    testing a design position rather than a deferral.
+
+    Consequence to carry, not to act on: if M1 ever adds `evidence_tier` here
+    for M7b, M3 must add it to the `Finding` mirror in the same change or M7's
+    own output is rejected by its own strict mirror.
     """
     schema = json.loads((CONTRACTS / "findings.schema.json").read_text())
     properties = schema["properties"]
@@ -322,8 +333,10 @@ def test_findings_result_is_unenumerated_and_tier_is_not_required():
         "result must stay unenumerated — its vocabulary is M7's call, not M1's"
     )
     assert "evidence_tier" not in required, (
-        "evidence_tier must not be required until D1 is ratified"
+        "evidence_tier does not belong on a finding — the tier is derived by M8 "
+        "from which probe ran, not carried on the probe's observation"
     )
     assert "evidence_tier" not in properties, (
-        "evidence_tier must not appear in properties until D1 is ratified"
+        "evidence_tier does not belong on a finding — D1 is ratified, and the "
+        "tier is M8's to derive; see this test's docstring"
     )

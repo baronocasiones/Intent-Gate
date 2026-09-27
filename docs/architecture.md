@@ -77,17 +77,19 @@ at `/` **only if that directory exists** (API-first otherwise).
 | Webhook ingress | `backend/app/routers/webhooks.py` — `POST /webhooks/github` | parses JSON body, calls `enqueue_run(payload)`, returns `{"run_id", "queued"}`. No signature check, no tunnel requirement (injected payloads hit the same endpoint) |
 | Run pipeline | `backend/app/orchestrator/pipeline.py` — `enqueue_run()` / `run_pipeline()` | `enqueue_run` mints id only; `run_pipeline` calls the six gates in order, synchronously |
 | Job queue | `backend/app/orchestrator/jobs.py` — `submit()` / `worker()` | exists, unwired (see §1) |
-| Stage 1 Ingest | `backend/app/gates/ingest.py::run(payload)` | stub: `{"stage": "ingest", "ok": True, "input_keys": sorted(payload.keys())}` |
+| Stage 1 Ingest | `backend/app/gates/ingest.py::run(payload)` | **real (Session 21, M4).** Returns `{stage, ok, input_keys, requirement, files[], workspace, rejected_paths, truncated}`. `files[]` is sorted, deduped, and each entry is `{path, sha256, status, note}` where `status` is `measured` (a real 64-hex content digest) or `unreached` with a named reason — never a `sha256: ""`, which in a digest field is indistinguishable from the digest of the empty file. **The path handling is the module:** `diff_paths` arrives on an endpoint with no signature check (D7 open), so every path goes through `resolve_workspace_path()`, which resolves it and refuses escapes, non-regular files and anything past a 2 MiB hash cap; the read is bound to the approved object with `O_NOFOLLOW` + `fstat` on the descriptor. `workspace` is process configuration (`WORKSPACE_ROOT`), never the payload. Caps on path count, requirement length and key count, each recorded rather than silently applied. **Zero product callers** — see §11.12 |
 | Stage 2 Extract | `backend/app/gates/extract.py::run(bundle)` | stub: `{"stage": "extract", "ok": True, "criteria": []}`. Spec: atomic criteria, ISO/IEC/IEEE 29148 quality gate, untestable rejected |
 | Stage 3 Parse | `backend/app/gates/parse.py::run(criteria)` | stub: `{"stage": "parse", "ok": True, "ast": []}`. Spec: cucumber/gherkin → AST, **no model in this loop** |
 | Stage 4 Verify | `backend/app/gates/verify.py::run(ast)` | stub: `{"stage": "verify", "ok": True, "findings": []}`. Spec: N workers (OS processes, not model subagents), 5 static probes (`CODE_SEARCH`, `LOGIC_TRACE`, `STATE_CHECK`, `ERROR_PATH`, `ABSENCE_CHECK`) + adversarial pass over **6 named** failure classes (boundary · omission · contradiction · implicit · negative · concurrency); LLM via watsonx.ai only |
 | Stage 5 Adjudicate | `backend/app/gates/adjudicate.py::run(findings)` | stub: `{"stage": "adjudicate", "ok": True, "verdict": "PENDING"}`. Spec: E0–E6 ladder → `CERTIFIED` / `CONDITIONAL` / `REJECTED` |
 | Stage 6 Emit+gate | `backend/app/gates/emit.py::run(verdict)` | stub: `{"stage": "emit", "ok": True, "exit_code": 1, "record": verdict}`. Spec: traceability matrix, signed hash-chained record, debt ledger, risk-weighted exposure; non-zero exit blocks merge |
-| Read-only policy | `backend/app/attestor/policy.py` — `GRANTS={read,subagent,skill,workflow}`, `DENIES={edit,execute}`, `assert_read_only(granted)` | raises `PermissionError` on leaked denies or missing grants. Enforced in tests only today, not in the pipeline path (see §11) |
+| Read-only policy | `backend/app/attestor/policy.py` — `GRANTS={read,subagent,skill,workflow}`, `DENIES={edit,execute}`, `assert_read_only(granted)` | raises `PermissionError` on leaked denies or missing grants. Enforced in tests only today, not in the pipeline path (see §11) — **row superseded as of Session 20 (M12): `GRANTS` gained `llm_egress`, and enforcement primitives now exist but are still unwired. See §8 addendum and §11.5** |
+| Read-only proof | `backend/app/attestor/sandbox.py` — `probe_workspace_readonly()`, `enforce_workspace_readonly()`, `WriteProof` | **new in Session 20 (M12).** Proves the workspace is read-only by attempting the forbidden write; `EROFS` and `EACCES` are both refusals, an unprobeable path is `undetermined` and never reported safe. Zero callers — M7/M10 own the call site |
 | LLM — live | `backend/app/llm/watsonx_client.py::complete(prompt, max_tokens=512)` | raises `RuntimeError` when `WATSONX_API_KEY` unset; otherwise raises `NotImplementedError` — IAM exchange + generation call land after the research spike |
 | LLM — mock | `backend/app/llm/mock_client.py::complete(...)` | deterministic `'{"verdict": "PENDING", "rationale": "mock — no live call"}'`; zero spend |
 | Metric | `backend/app/metrics/false_certified.py` — `OPERATORS` (7) + `false_certified_rate(results)` | `P(CERTIFIED \| spec violation present)`; returns `{false_certified_rate, measured, by_operator}`; `measured = total > 0`; `None` rate when empty |
-| Schemas | `backend/app/models/schemas.py` — `ContractModel` (base, `extra="forbid"`), `Criterion`, `CriterionVerdict`, `RunRecord`, `TraceabilityLink`, `TraceabilityMatrix`, `Exposure`, + `Verdict` / `EvidenceTier` literals | pydantic v2; **one model per contract (5/5)**. Strict in-process layer vs the contracts' permissive interchange layer. Verdicts carry `criterion_id, verdict, evidence_tier, locations[], rationale`; runs carry `measured: bool`. `Exposure` defaults to the honest unmeasured state (`null` rate, never `0.0`). Parity asserted in `test_models_parity.py` |
+| Schemas | `backend/app/models/schemas.py` — `ContractModel` (base, `extra="forbid"`), `Criterion`, **`Finding`**, `CriterionVerdict`, `RunRecord`, `TraceabilityLink`, `TraceabilityMatrix`, `Exposure`, + `Verdict` / `EvidenceTier` / the 5-probe `Literal` | pydantic v2; **one model per contract (6/6 — 5 titled + `TraceabilityLink` for the traceability contract's inline link object)**. Strict in-process layer vs the contracts' permissive interchange layer. Verdicts carry `criterion_id, verdict, evidence_tier, locations[], rationale`; runs carry `measured: bool`. `Exposure` defaults to the honest unmeasured state (`null` rate, never `0.0`). Parity asserted in `test_models_parity.py` |
+| Schemas — guards | `test_models_parity.py` | **Session 21.** `Finding` was **missing** — M3 branched before M1's `findings.schema.json` landed, so parity was honestly 5/5 on its branch and the merge is what exposed the gap (3 red tests, 2 of them pre-existing on `origin/main`). Added alongside it: three guards that a mutation battery showed were **decoration**. Parity asserted `contract ⊆ model`, so a model could carry a field no contract declares (adding `evidence_tier` to `Finding` fired nothing) and could narrow a type the contract leaves open (`result` → `Literal`, and `probe` 5→4, both fired nothing — round-trip tests structurally cannot see a de-typing, test-suite.md Convention 8). Now: equality **both** ways, plus field-type parity, plus 5 tests that construct `Finding` from `contracts/examples/findings.json` — which nothing had ever done, so the mirror's shape was pinned while its ability to load real data was not |
 | Persistence — index | `backend/app/db.py` — `get_db()` + `SCHEMA` | SQLite, `PRAGMA journal_mode=WAL`, one table `runs(id, status, created_at, artifact_path)`. No caller yet |
 | Persistence — artifacts | `backend/app/store/artifacts.py::write_artifact(run_id, payload)` | writes `$ARTIFACT_DIR/{run_id}.json` as `{"sha256": <of sorted body>, **payload}`; `makedirs` on demand. No caller yet |
 | Config | `backend/app/config.py` + `backend/.env.example` | env-driven: `WATSONX_API_KEY/PROJECT_ID/URL` (default `https://us-south.ml.cloud.ibm.com`), `DATABASE_URL` (`sqlite:///./attestation.db`), `MOCK_LLM` (`"true"` → mock), `ARTIFACT_DIR` (`./artifacts`). Secrets never committed (`.gitignore` covers `.env`) |
@@ -124,19 +126,39 @@ No auth, no SSE/polling, no GitHub comment/check-run write-back yet (all were ol
 ## 7. LLM layer + spend discipline
 
 - All verification reasoning goes through `llm/watsonx_client.py::complete()`. No other model call sites exist.
-- **Dual-mode is declared but not wired.** `MOCK_LLM` is read *nowhere* in `backend/app` — not by
-  either client, not by the pipeline, not by any router. `config.py` parses it, `watsonx_client.py`
-  only names it in its error string, and `mock_client.py` is imported by nothing but
-  `tests/test_llm.py`. So the previous wording here — "`MOCK_LLM=true` selects `mock_client`" —
-  **was false and is corrected here.** The demo-survival rule (AGENTS.md Convention 4,
-  `modules.md` rule 4) currently survives only because `mock_client` is the sole implemented
-  path, not because a switch exists. See §11.9.
+- **The switch now exists — and still has no caller.** `llm/__init__.py::select_client()` returns
+  `mock_client` or `watsonx_client` from `MOCK_LLM`, and it is the only sanctioned way to reach
+  either: `test_the_selector_is_the_only_sanctioned_path` walks `backend/app` and fails if any
+  module outside `llm/` names a client, so this bullet is now mechanical rather than a claim.
+  **That guard is vacuously true today** — no stage calls a model yet, because M5 and M7b are
+  both unbuilt — which is why it was mutation-proven (injecting a direct import into a gate fails
+  33 tests) instead of trusted. The switch is *tested*, not *used*: `mock_client` is still
+  unreachable from product code, and the demo-survival rule still survives only because the mock is
+  the sole implemented path. The durable control is not `select_client`; it is M5's and M7b's own
+  tests asserting which client they received. See §11.9.
+- **It selects; it does not fall back, deliberately.** M11's AC wants `MOCK_LLM=true` to cover "a
+  failed live call" too. That half is *not* implemented here, and the omission is the point: a live
+  outage degrading silently to fixture verdicts would emit a record indistinguishable from a real
+  attestation. Degrading is the caller's decision, made explicitly and recorded in the run.
+- The default is **live**, not mock. An unconfigured environment raises `RuntimeError` rather than
+  returning canned verdicts — fail-closed, and the opposite of what a demo-survival reading of
+  Convention 4 would suggest.
 - Live path without `WATSONX_API_KEY` fails loud with `RuntimeError` (never silent).
 - Hour-one spike: **research complete** as of 2026-09-27 — auth pattern, endpoint, structured-output mode, rate limiting, and the spend meter are recorded in `docs/watsonx-integration.md`. **Code not written:** the IAM token exchange (note: `expires_in` is 3600s, so the token cache must be TTL-aware) and the generation call remain `NotImplementedError`. Two spike items still need a provisioned account: the model id and the burn plan.
 
 ## 8. Read-only attestor (differentiator, as coded)
 
 `GRANTS = {read, subagent, skill, workflow}`; `DENIES = {edit, execute}`. `assert_read_only()` fails closed on either leak or incompleteness. The N-worker fan-out in Stage 4 is N **OS processes**, not model-invoked subagents (this is what the Figure 6 footer note means; the fleet-flags string `--disable-subagents` vs the granted `subagent` cap is a known wording tension kept as-is from Session 7). **Never weaken this in demo shortcuts** (standing convention).
+
+### 8.1 Addendum — Session 20 (M12): declaration vs observation
+
+Everything above this line describes the pre-M12 state and is retained verbatim. What changed:
+
+- **`GRANTS` gained `llm_egress`** (now `HARNESS_GROUPS | OS_PROPERTIES`, the split being §1.6's "do not conflate"). M7b workers call watsonx.ai themselves, so they need egress. Named for the capability *kind*, never a host, because egress must cover both the auth and inference endpoints and the region is env config. A blanket `network` grant is deliberately absent and pinned by a test.
+- **`assert_read_only()` alone still proves nothing** — it is a set comparison and can only fail if the set came from outside this module. `resolve_worker_caps()` now takes the set from the worker's own `ATTESTOR_CAPS` declaration and fails closed on absent/empty/non-string/out-of-vocabulary input.
+- **A workspace proof now exists** (`sandbox.py`, §3). `PolicyRecord` carries `workspace_readonly` plus the kernel's own witness, so the emitted record would hold evidence rather than a declaration.
+- **Enforcement is still not live.** `enforce_worker_read_only()` has zero callers; the wiring is M7/M10's and the record key is M9's. §11.5 therefore remains open, narrowed.
+- `DENIES` and the body of `assert_read_only()` are **byte-identical** to their pre-M12 form (md5-verified at commit time). `edit` and `execute` remain withheld.
 
 ## 9. Publishable metric (as coded)
 
@@ -151,7 +173,7 @@ wired yet.
 ## 10. Contracts, fixtures, validator, frontend
 
 - **Contracts** (`contracts/*.schema.json`, draft-07): `criterion` (`criterion_id, text, testable`), `verdict` (verdict enum + E0–E6 tier + `locations[]` + `rationale`), `run` (`run_id, status, verdicts[], measured`), `traceability` (`run_id, links[{criterion_id, locations[], evidence_tier}]`), `exposure` (`false_certified_rate, measured, by_operator`), `findings` (`criterion_id, probe enum[5], result, location, note`). **6 schemas.** `run` → `verdict` via `$ref`.
-- **Fixtures** (`fixtures/`): `demo_run.json` (run `demo`, `PENDING`, `measured: false`, AC-1/AC-2 E0 stubs), `demo_traceability.json` (matching links). These **are the frontend's API** until backends land.
+- **Fixtures** (`fixtures/`): `demo_run.json` (run `demo`, status `rejected`, `measured: false`, AC-1 `CERTIFIED` at E4 and AC-2 `REJECTED` at E2, both carrying locations), `demo_traceability.json` (the same run's matrix, its per-criterion tiers matching the verdicts), `demo_exposure.json` (mutation fixture: `false_certified_rate` 0.25, `measured: true`, all 7 operator keys). These **are the frontend's API** until backends land. `frontend/public/fixtures/demo_run.json` is a byte-identical served copy of `demo_run.json`, held equal by a test; until Session 19 it held the *traceability* payload under a run filename and was loaded by nothing.
 - **Validator** (`scripts/validate_contracts.py`): validates **6 pairs** (`run↔fixtures/demo_run.json`, `traceability↔fixtures/demo_traceability.json`, `verdict↔contracts/examples/verdict.json`, `criterion↔contracts/examples/criterion.json`, `exposure↔contracts/examples/exposure.json`, `findings↔contracts/examples/findings.json`) with `$ref` store resolution, plus a **coverage check** (`uncovered_schemas()`) that fails if any schema on disk has no pair — Convention 3 is now enforced, not just documented. The reported count is derived from the schemas on disk, not from `len(PAIRS)`, so a duplicate entry cannot overstate coverage. stdlib + `jsonschema` only.
 - **Frontend** (`frontend/`, React 18 + Vite 6): `App.jsx` fetches live (`api.js: fetchRun/fetchMetrics`, graceful `null` on failure) then falls back to `fixtures.js` (mirrors `demo_run.json`); banner shows `(fixture mode)` when not live. Four components: `VerdictBadge` (green/red/orange), `EvidenceLadder` (E0–E6 counts), `TraceabilityMatrix` (criterion/verdict/tier/locations table), `ExposureCard` (rate or `unmeasured`, measured/fixture tag). Dev proxy (`vite.config.js`) forwards `/api` + `/webhooks` to `127.0.0.1:8000`. Production serving is via FastAPI static mount (subject to the §2 path defect).
 
@@ -161,12 +183,14 @@ wired yet.
 2. `GET /api/runs*` and `GET /api/metrics` return hard-coded stubs; `db.get_db` / `write_artifact` have no callers.
 3. Gates return shape-correct stubs with empty payloads (`criteria: []`, `ast: []`, `findings: []`, `verdict: PENDING`).
 4. `watsonx_client.complete` is `NotImplementedError` past the key check — the integration pattern is now researched and specified in `docs/watsonx-integration.md`, but **no code has been written**.
-5. `assert_read_only` is test-only; pipeline never calls it.
+5. `assert_read_only` is test-only; pipeline never calls it. **Narrowed by Session 20 (M12), not closed:** the primitive now exists and takes its capability set from the worker's own declaration instead of a self-comparison, and `sandbox.py` adds a real read-only proof. Still zero callers — the worker-startup call is M7/M10's, the `attestor_policy` key in the emitted record is M9's. See §8.1.
 6. §2 `_dist` path defect (three-level climb, should be two).
 7. Missing vs spec: GitHub write-back (comments + check runs), review-debt ledger, risk-weighted exposure decay curve, signed cross-file hash chain, SSE/polling, auth, real demo-repo target.
 8. Dependencies pinned in `backend/requirements.txt`: fastapi 0.135.3, uvicorn 0.44.0, pydantic 2.13.0, httpx 0.28.1, jsonschema 4.26.0, pytest 9.0.3, pytest-asyncio 1.4.0. Smoke tests in `backend/tests/test_scaffold.py` (pipeline stub path, policy guard, metric-empty) are the only coverage.
-9. **Dual-mode is not wired** (found 2026-09-27 while reconciling Figure 6 — previously unrecorded). `MOCK_LLM` has no reader in `backend/app`, so nothing selects between `mock_client` and the live client; `mock_client` is unreachable from product code. `modules.md` rule 4 and AGENTS.md Convention 4 both assume a switch that does not exist. Owner: **M11**, and it is a prerequisite for M7's fan-out, not a nicety.
+9. **Dual-mode: the switch is built, the wiring is not** (found 2026-09-27 while reconciling Figure 6 — previously unrecorded). **Narrowed by Session 21, not closed.** `llm/__init__.py::select_client()` now reads `MOCK_LLM` and returns the right client, and a guard walks `backend/app` to prove nothing reaches a client except the switch — so `modules.md` rule 4 and AGENTS.md Convention 4 now have a selector to point at. **But no stage calls it:** M5 and M7b are both unbuilt, so `mock_client` remains unreachable from product code and the demo-survival rule still survives by accident rather than by design. Owner: **M5** (first consumer), then M7b. The remaining half is not a missing line but a missing *test on the consumer*: the durable control is M5 asserting which client it got, not the selector existing. See §7. *(M4-ingest merge: this supersedes the pre-merge item 9, "Dual-mode is not wired" — the switch landed on the branch.)*
 10. **The pydantic mirrors have zero product callers** (found 2026-09-27, Session 18). As of that session `app.models.schemas` is imported by `test_models_parity.py` and `test_schemas_contracts.py` and by **nothing else** — no gate, router, orchestrator or metric module uses it. M3 completed (5/5 parity, 100 tests green) but is not yet load-bearing; the models become real only when M4–M9 and M13/M15 construct and consume them. Related: the strictness added in Session 18 makes two paths that do not exist yet — reading a `write_artifact` envelope into `RunRecord` (`sha256` is not a contract key) and validating M9's record (a superset of `run.schema.json`) — require key projection first. Both are recorded in `modules.md` §M3 as M9/M14 obligations.
+16. **Stage 1 is real and completely unreachable.** Session 21's M4 landed a resolver that survives `..`, absolute paths, sibling-prefix paths, symlink chains, FIFOs, devices, NUL bytes, surrogate escapes and 5000-char components (verified across 3.11.9 / 3.12.14 / 3.13.14, ~240 cases) — and **not one of those is currently reachable, because `enqueue_run` mints a uuid and returns and `run_pipeline` has no product caller.** Recorded because it inverts the urgency: every finding in the M4 audit is latent, and each is cheap now and expensive to retrofit the moment M10 wires `enqueue_run → run_pipeline`, which is the next module in the chain. A stage that cannot be invoked has not been hardened by its own cleverness. *(M4-ingest merge: renumbered 12 → 16 — main's 12/13 were taken while the branch was out.)*
+17. **The read-only mount does not cover the process that reads the code.** M4's containment decision is made on a resolved path, so the durable control against a workspace mutated mid-run is a read-only mount — but the mount M10 provisions is specified for the **attestor worker (M7b)**, not for the API process, and Stage 1 runs wherever `run_pipeline` runs. M4 therefore describes its own limit rather than claiming M10's mount as its control: `ingest.py`'s docstring says so in as many words, and names the *name*-vs-*content* scope of a containment check (a hardlink inside the root is `measured`, correctly, because a hardlink has no target). **This is the withheld-`edit` theatre pattern one layer up** — naming a control that is not in force for the thing it is claimed to protect — and it is a live decision for M10 and M15, not a documentation nicety. Owner: **M10** (provision) + **M15** (`main.py`, the only owner of the lifespan). *(M4-ingest merge: renumbered 13 → 17 — same collision as above.)*
 11. **Figure 6 asserts three things that are false, and cannot be regenerated** (found 2026-09-27, Session 18, while documenting the M1 contracts work).
     - The **Contracts (M1)** box reads "5 JSON Schemas (draft-07)" and "validator covers 2 of 5 pairs". The truth is **6 schemas and 6 pairs**, all covered and enforced.
     - The **Exposure (M9)** box reads "NOT built — exposure schema has no PAIRS entry". That orphan is exactly what Session 18 closed: `exposure.schema.json` now has `contracts/examples/exposure.json` and a `PAIRS` entry. The box is the thing that is wrong, not the code.
@@ -790,3 +814,65 @@ was correct throughout; the drift was entirely in prose. All ten are now correct
 - **User decisions affecting this record:** (a) **the mutation harness is not part of the current architecture** — `origin/bob/m13-mutation-harness` is unpruned dead work and will be deleted; note **§9, `exposure.schema.json`, and the `/api/metrics` stub are unaffected and remain as-coded** (the harness was never on `main`); (b) **ExposureCard hidden for the demo** — frontend-only; backend endpoint, contract, validator pair stay (route-table test + 6/6 coverage depend on them); (c) R4 thin slice as scoped; (d) Bob demo = **invoke the gate only** (one command-tool call; the run's `exit_code` is the merge signal); (e) `M4-ingest` merges with a **45-min timebox** and pre-agreed cherry-pick fallback (`b1689c3`, `6c69c04`).
 - **API endpoints:** none defined, changed, or removed. **Dependencies added:** none.
 - **Open at archive:** plan awaiting "go" (Phase 0 = delete dead branch, start M4 merge, `npm install`, Bob + credits health check, baseline suite); §11.15 still the only known red; **Figure 6 still do-not-show** (§11.11 unchanged); admin's answer on whether a pre-recorded Bob session counts is still pending; submission packaging unowned until Phase 5; the Aixxn/GiGi work sessions have no AGENTS.md entries of their own (branch state recorded here instead).
+*MERGE (M4-ingest, Session 25): the two entries below landed via this merge — branch-numbered Sessions 19/20 from Aixxn's lane. Their subtitles disambiguate them from main's same-numbered sessions (Session 20 precedent: keep both, never rewrite history).*
+
+### 2026-09-27 — Session 19: M2 demo corpus (fixtures as-built)
+
+- **Code, 6 files, committed as `88095b2`.** No product code, no router, no contract, no
+  dependency. M2 is data plus its test guard.
+- **§10 Fixtures corrected in place** — the paragraph above said `demo_run.json` was
+  "`PENDING`, `measured: false`, AC-1/AC-2 E0 stubs". That stopped being true this session
+  and the record is code-faithful by contract, so it was corrected rather than appended to.
+  The old wording was not removed from history: `git show 30724e2:docs/architecture.md`.
+- **What is on disk now:** `demo_run.json` is a real `rejected` run — AC-1 `CERTIFIED` at E4
+  (`src/refund.py:64`), AC-2 `REJECTED` at E2 (`src/refund.py:88`). `demo_traceability.json`
+  describes that same run and previously contradicted it (E0, no locations, while the run
+  said E4/E2 — one run described two ways). `demo_exposure.json` is new: rate 0.25,
+  `measured: true`, all 7 operator keys, three of them honestly 0/0.
+- **Three divergent copies of the demo data, now two.** `frontend/public/fixtures/demo_run.json`
+  was byte-identical to `fixtures/demo_traceability.json` despite its filename, and nothing
+  loaded it. It is now the run shape, byte-identical to the canonical fixture, with a test
+  holding the two equal. The third copy — `frontend/src/fixtures.js` — is **still there** and
+  `App.jsx` still imports it; deleting it is M16's file and is filed as M16 request 1.
+- **§11 unchanged.** Nothing was closed. The dashboard still does not read this corpus when
+  the backend is up: `GET /api/runs/{id}` returns `{"run_id","status"}` with no `verdicts`,
+  which is a 200, so `App.jsx` sets `live=true` and renders empty (gap 2). The corpus is only
+  reached when the backend is unreachable. The fixture is not yet displayed, only served.
+
+### 2026-09-27 — Session 20: M12 attestor read-only policy (commit `9c7343d`, branch `M12-attestor`)
+
+- M12 only. **No endpoint, route, contract, schema, or dependency was touched** — verified by diffing
+  `backend/app/routers/`, `main.py`, `requirements.txt` and `pyproject.toml` against `30724e2`: all empty.
+  `sandbox.py` is stdlib-only (`errno`, `os`, `pathlib`, `dataclasses`).
+- **The central finding.** The policy withheld a *capability* while the workspace was a *writable
+  directory*, so withholding `edit` was theatre: nothing in the emitted record would have admitted
+  the process could still write. `sandbox.py` closes that by attempting the forbidden write and
+  recording what the kernel did. `EROFS` (read-only mount) and `EACCES` (no write bit) are the same
+  answer at different layers and both count as refused; an unprobeable path is `undetermined` and
+  is never reported as safety.
+- **The tautology trap, avoided deliberately.** `assert_read_only(GRANTS)` compares the constant to
+  itself, can never fail, and would have proved nothing. The capability set now comes from the
+  worker's own `ATTESTOR_CAPS` declaration, resolved fail-closed. A test asserts this is not the
+  tautology, and the mutation battery confirmed it: reverting to `policy_record(GRANTS, …)` fails
+  6 tests.
+- `GRANTS` gained **`llm_egress`** — see §8.1 for why it is named for the capability kind rather
+  than a host, and why a blanket `network` grant stays rejected.
+- **Not weakened:** `DENIES` and the body of `assert_read_only()` are byte-identical to their
+  pre-M12 form, md5-verified against the parent commit. `edit` and `execute` remain withheld.
+- **Verification:** 151 tests green on 3.11.9 and 3.12.14; validator 6/6. `test_policy.py` 9 → 63
+  tests. Mutation-tested, 8 mutations, **none survived** — including granting `edit` (22 failures,
+  also caught by `test_scaffold.py`, a file M12 does not own) and swapping `llm_egress` for
+  `network` (19).
+- **Known gap, stated plainly:** production refuses via `EROFS` from a read-only mount, and **no
+  test in this repo has watched a real mount refuse a write** — every refusal test gets `EACCES`
+  from a `chmod 555` directory. The constant is pinned and the errno translation is
+  substitution-tested, so dropping `EROFS` does fail the suite, but that is coverage by
+  substitution rather than observation. A CI leg against a real `--read-only` mount is M17's.
+- **New forward dependency, created here:** M7b now hard-depends on M10 having provisioned a
+  read-only workspace. Ordering matters — if M10 probes before mounting, the worker refuses to
+  start. That reads as a bug and is the control working.
+- **Open, not decided here:** the egress allowlist does not exist, so `llm_egress` is a declaration
+  enforced by nothing. A hard blocker on M7b shipping, not a follow-up. Also unresolved: the
+  `--disable-subagents` vs granted-`subagent` wording tension (kept-as-is since Session 7), and the
+   `HARNESS_GROUPS`/`OS_PROPERTIES` split is a forcing function rather than architecture — no code
+   branches on it.

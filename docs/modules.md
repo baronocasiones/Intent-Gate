@@ -188,13 +188,18 @@ of the same input. The two demo criteria are `AC-1` and `AC-2`. `criterion.text`
 criterion verbatim from the requirement. `criterion.testable` is M5's quality-gate
 output — an untestable criterion is rejected outright, never verified.
 
-### 1.4 Evidence ladder E0–E6 — **PROPOSED, NOT FROM SOURCE**
+### 1.4 Evidence ladder E0–E6 — **RATIFIED (D1). Still not from the source.**
 
 The source names the ladder (`IBM BOB.pdf` section 3, "E0–E6 evidence ladder") but
 **never defines the tiers** — the extracted proposal text contains the phrase and nothing
-more. The mapping below is a proposal for the team to ratify or replace (**D1**). It is
-shaped to match what the code already implies: `demo_run.json` puts stub verdicts at `E0`
-with no locations, and `EvidenceLadder.jsx` counts criteria per tier.
+more. The mapping below was written by us, and **ratifying it ratified our own proposal,
+not a definition recovered from the source.** That distinction has to survive into every
+artefact that shows a tier: a pitch slide, a screenshot, a run record. "E4" means what
+*we* decided E4 means. Anyone reading it as IBM's taxonomy is reading something that was
+never written down anywhere but here.
+
+It is shaped to match what the code already implies: `demo_run.json` puts stub verdicts at
+`E0` with no locations, and `EvidenceLadder.jsx` counts criteria per tier.
 
 | Tier | Name | Means | Typically reached by |
 |---|---|---|---|
@@ -207,9 +212,27 @@ with no locations, and `EvidenceLadder.jsx` counts criteria per tier.
 | E6 | corroborated | independently reproduced and hash-chained into the signed record | M9 signer |
 
 Escalation is monotonic per criterion: a verdict carries the **highest** tier actually
-reached, and `locations[]` lists everything examined. **PROPOSED (D1):** `CONDITIONAL` is
+reached, and `locations[]` lists everything examined. **RATIFIED (D1):** `CONDITIONAL` is
 reserved for E2–E5 (found, not yet provable); `CERTIFIED` requires **E4 minimum**;
 `REJECTED` may be asserted at any tier once a refutation exists.
+
+**Ratified 2026-09-27 (Session 21).** Three consequences, all load-bearing:
+
+1. **The tier is derived by M8, not carried by M7.** A finding states what a probe
+   observed; a verdict states how far the evidence reached. `findings.schema.json`
+   therefore keeps no `evidence_tier` key and M3's `Finding` mirror declares none — the
+   guard `test_findings_result_is_unenumerated_and_tier_is_not_required` now tests a
+   design position rather than a deferral. **Consequence to carry, not act on:** if M1
+   ever adds the field for M7b, M3 must add it to the mirror in the same change or M7's
+   output is rejected by its own strict mirror.
+2. **M1's deferred `CERTIFIED ⇒ E4` constraint is now unblocked.** It was deferred
+   precisely because D1 was open. Draft-07 `if/then` can express it. Not written — it is
+   M1's file, and it belongs with the first emitter that has to honour it.
+3. **M7a alone cannot exceed E4** (§1.8), so the `CERTIFIED` floor is exactly reachable and
+   never cleared by the deterministic half of Stage 4. That is a property to show, not a
+   limitation to apologise for: it is the honest ceiling on what no model in the loop can
+   prove.
+
 
 ### 1.5 Verdict semantics and the exit code
 
@@ -284,6 +307,126 @@ GET /api/metrics
 lying. `measured: false` with a `null` rate is the honest pre-measurement state and must
 stay visibly distinct from `0.0`: never render "0% false-certified" before you have data.
 `ExposureCard.jsx` already distinguishes `unmeasured`; keep that.
+
+### 1.8 Shared vocabulary settled ahead of the first consumer (Session 21)
+
+Three shapes cross a stage boundary and were undefined until this section. They are written
+down **before** the code that produces or consumes them, because a fail-closed rule landing
+on a consumer that was never ready reads as a bug — and the cheapest fix under deadline is to
+weaken the rule. `AGENTS.md` Convention 13.
+
+#### 1.8.1 The `result` vocabulary (M7 produces, M8 consumes)
+
+`findings.schema.json` deliberately leaves `result` unenumerated — *"its vocabulary belongs
+to M7, not M1"*. That is a deferral, and a deferral with two consumers is a hole. Four
+values, settled here:
+
+| `result` | Means | Counts as support? |
+|---|---|---|
+| `refuted` | a probe **positively observed** a construct contradicting the criterion | no — it refutes |
+| `supported` | a probe positively observed a construct consistent with the criterion | yes |
+| `undetermined` | the probe ran and could not decide | **no** |
+| `not_applicable` | the probe does not apply to this criterion | **no** |
+
+`refuted` is already pinned by `contracts/examples/findings.json`. **M8 must treat
+`undetermined` and `not_applicable` as non-supporting** — rule 6.
+
+**An unrecognised `result` is fail-closed AND loud — both, not a choice between them.**
+M8 must not guess a new category and must not silently treat the finding as nothing:
+
+- treat it as **non-supporting**, so it can never raise a tier or support a
+  certification (rule 6);
+- **name the unrecognised value in that criterion's `rationale`**, so the run record
+  says "probe reported `REFUTED`, which is not a value this gate understands" rather than
+  quietly producing a plausible verdict;
+- raise the tier to **E1 at most** — a probe that returned something uninterpretable is a
+  probe that ran and decided nothing.
+
+The tempting shortcut is a `dict.get(result, UNDETERMINED)` default. That gets the
+fail-closed half right and the loud half wrong, and the loud half is the one an auditor
+needs: a producer that starts emitting a fifth value is a bug, and a gate that absorbs it
+is how the bug survives to a demo.
+
+**This table is not yet a guard, and it must become one.** A vocabulary written only in a
+markdown file is a comment: M7 could emit `REFUTED` or `refute`, M8 could disagree, and
+this section would still say four values. The mechanical version is owed, and the ownership
+is unambiguous — `findings.schema.json` says so in as many words:
+
+- **M7 defines the vocabulary as a module constant** in `gates/verify.py` (its file), and
+  emits only those values;
+- **M8 imports that constant** rather than restating it, so the two cannot drift;
+- **a test asserts M7's constant equals this table.** Until M7a lands, the only anchor is
+  `test_finding_result_stays_an_open_string_and_the_example_uses_a_documented_value`,
+  which checks the contract's own example against these four values. That is a floor, not
+  the real thing.
+
+#### 1.8.2 Absence of evidence is `undetermined`, never `refuted`
+
+**The load-bearing honesty rule of the stage chain.** `ERROR_PATH` not finding a retry does
+**not** refute a 3-retry requirement — the retry may be three modules away. Only a *positive
+observation of a contradicting construct* may refute. Two corollaries:
+
+- **`ABSENCE_CHECK` can never return `supported` deterministically.** A negative claim is
+  not decidable without a model, so M7a returns `undetermined` with a note saying why, and
+  E5 stays reserved for M7b's adversarial pass. A probe that "confirms" an absence would be
+  a fabricated-evidence generator — the exact failure this project exists to stop.
+- **Low precision is safe; a false *match* is not.** A criterion with no location yields
+  `locations[] == []` and flows on unexamined. A *wrong* location would let M7 certify
+  against the wrong code, so the probes are precision-biased: emit a location only on an
+  exact identifier match, and say how it matched.
+
+#### 1.8.3 The threading contract
+
+`pipeline.py` threads each stage's output verbatim forward and is M10's file, so a stage
+gets what earlier stages **pass on**. Rule 3 permits adding keys; §0.3 rule 2 forbids
+renaming or dropping one. The chain of custody, settled so nobody has to guess:
+
+```
+payload  → M4 ingest    {input_keys, requirement, files[], workspace}
+         → M5 extract   {criteria[]}                     ← M5, deferred
+         → M6 parse     {ast[], criteria[]}              ← threads criteria forward
+         → M7a verify   {findings[], criteria[], mode, tokens_spent}
+         → M8 adjudicate{verdict, verdicts[], criteria[]}
+```
+
+**Why `criteria` is threaded twice, and why it is load-bearing.** `adjudicate.run(findings)`
+receives only M7's dict, so M8 **cannot enumerate a criterion it never saw** — yet rule 6
+requires an unexamined criterion to become `PENDING` with a "not examined" rationale. Without
+the threading, M8 emits `verdicts: []`, and the failure mode is fail-*open* in the worst
+way: a run with nothing to check, which reads as "no problems found" rather than "no
+evidence gathered". `verdicts: []` must therefore always resolve to run-level `PENDING`, and
+that is pinned by a test rather than assumed.
+
+M4's `workspace` and M6's re-verification of M4's hashes are the same kind of obligation: a
+stage that needs something the previous stage did not emit must not quietly invent it.
+
+#### 1.8.4 Probe → tier, for M8 to derive
+
+§1.4's "typically reached by" column, made mechanical. **M7a emits no tier; M8 computes the
+highest tier its findings justify.**
+
+**The tier tracks the strongest probe that produced a *determinate* observation — in either
+direction.** A refutation is evidence too: M2's `demo_run.json` has AC-2 `REJECTED` at `E2`
+on the strength of one located contradiction and no more. A table that only counted
+`supported` findings would put that verdict at E1 and contradict the fixture we ship.
+
+| Findings for a criterion | Tier |
+|---|---|
+| none at all | E0 |
+| only `undetermined` / `not_applicable` — ran, decided nothing | E1 |
+| `CODE_SEARCH` determinate (`supported` **or** `refuted`), with a location | E2 |
+| `LOGIC_TRACE` or `STATE_CHECK` determinate | E3 |
+| `ERROR_PATH` — a deterministic check actually executed | E4 |
+| `ABSENCE_CHECK` + adversarial | E5 — **M7b only** |
+| hash-chained into the signed record | E6 — **M9 only** |
+
+Direction and tier are orthogonal. `undetermined` and `not_applicable` never raise the tier
+however many probes emit them, because they are not observations — which is exactly why
+§1.8.2 forbids manufacturing one.
+
+**M7a therefore cannot exceed E4**, which is exactly the `CERTIFIED` floor. Stated as a
+design property: the deterministic half of Stage 4 can *reach* the bar and never clears it.
+Crossing it requires the model, and the model is where the evidence stops being free.
 
 ---
 
@@ -463,6 +606,21 @@ re-exports; the brief names one file and callers use the full path).
 > `test_gates.py` that you will update in the same change (rule 7). Stage order is
 > asserted by `test_stage_names_follow_architecture_order` — do not reorder or rename
 > the `stage` values.
+>
+> **Two additions settled in Session 21, both in §1.8 — read them before writing your
+> stage.** (a) The **threading contract** (§1.8.3): `pipeline.py` is M10's file and
+> threads verbatim, so a stage gets what earlier stages pass on. `criteria` is threaded
+> forward through M6 and M7a on purpose, because M8 cannot enumerate a criterion it never
+> saw and an empty `verdicts[]` is a fail-*open*. (b) The **`result` vocabulary**
+> (§1.8.1) and the **absence rule** (§1.8.2): absence of evidence is `undetermined`,
+> never `refuted`, and `ABSENCE_CHECK` can never return `supported` without a model.
+>
+> **And note the constraint the existing order-test imposes on all six:** every gate is
+> called with a bare `{}` by `test_stage_names_follow_architecture_order`, so every gate
+> must tolerate a foreign empty dict and still return its `stage` name. That is
+> fail-closed behaviour by construction. It also means `enforce_worker_read_only` stays
+> at **worker startup** (D6) and never inside `verify.run()` — there it would raise
+> `PermissionError` with `ATTESTOR_CAPS` unset, in CI, on the order test.
 
 ### M4 — Stage 1 Ingest
 
@@ -714,6 +872,13 @@ this module is still unimplemented.**
       half-implemented client that looks live.
 - [ ] `MOCK_LLM=true` stays the default-safe path for CI and for a failed live call
       (rule 4). A live failure must degrade to fixtures, never crash the demo.
+      — **half done, Session 21, and the two halves are deliberately not the same
+      work.** The *switch* is built: `llm/__init__.py::select_client()` returns the right
+      client and a guard proves nothing reaches one except the switch. The *degradation*
+      is deliberately **absent** — a live outage falling back silently would emit a record
+      indistinguishable from a real attestation, so degrading is the caller's explicit,
+      recorded decision. Still open: no caller (§11.9), and the default is **live**, so
+      an unconfigured environment raises rather than returning fixtures.
 - [ ] No third model client may appear in `backend/app/llm/` — asserted today by
       `test_llm_package_has_no_third_model_client`. Keep it that way.
 - [ ] Secrets never committed; `config.py` reads env at import (tests patch the
@@ -738,12 +903,29 @@ enforced in tests only, never in the pipeline.
 **Acceptance criteria**
 - [ ] `assert_read_only` is called on the real worker capability set at worker startup
       (**D6**). This is the difference between a claim and a control.
-- [ ] Both failure directions stay covered: a leaked deny **and** a missing grant each
+      — **primitive landed in Session 20 (`9c7343d`); call site is M7/M10's file, so still open**
+- [x] Both failure directions stay covered: a leaked deny **and** a missing grant each
       raise `PermissionError` (asserted today — do not weaken to a warning).
-- [ ] The policy is visible in the emitted record (which capabilities the run had), so an
+      — held and extended; `DENIES`/`assert_read_only` byte-identical, md5-verified
+- [x] The policy is visible in the emitted record (which capabilities the run had), so an
       auditor can see the control was applied.
-- [ ] **Never weakened for a demo shortcut** (rule 5, `AGENTS.md` Convention 8). If a
+      — fragment built and pinned in Session 20; `record["attestor_policy"] = policy.to_dict()`
+        is M9's one line, so the record does not yet carry it
+- [x] **Never weakened for a demo shortcut** (rule 5, `AGENTS.md` Convention 8). If a
       demo step seems to need `edit`, that is a bug in the demo, not the policy.
+      — mutation-tested: granting `edit` fails 22 tests, including one in `test_scaffold.py`
+        that M12 does not own
+
+**Session 20 addendum (M12, `9c7343d`, branch `M12-attestor`).** `GRANTS` is now
+`HARNESS_GROUPS | OS_PROPERTIES` and includes **`llm_egress`**: M7b workers call watsonx.ai
+themselves, so a worker needs egress. Named for the capability *kind*, never a host, because
+egress must cover both the auth and inference endpoints and the region is env config. A blanket
+`network` grant is deliberately absent and pinned by a test. New `backend/app/attestor/sandbox.py`
+proves the workspace is read-only by attempting the forbidden write — the part that was missing
+entirely, and the reason withholding `edit` was previously theatre. Wiring, one line each, for the
+owners: `enforce_worker_read_only(os.environ.get(ATTESTOR_CAPS_ENV), workspace)` at M7/M10 worker
+startup, and `record["attestor_policy"] = policy.to_dict()` in M9. Stdlib only; no endpoint,
+contract, schema, or dependency changed.
 
 **Size:** S. **Needs:** nothing. **Note:** this is the pitch's sharpest differentiator
 and a direct IBM read-only-governance angle. Cheap to finish, expensive to lose.
@@ -945,12 +1127,12 @@ record that you did.
 
 | ID | Decision | Blocks | Recommended default |
 |---|---|---|---|
-| **D1** | E0–E6 tier semantics — undefined in the source (1.4) | M7, M8, M9, M16 | Ratify the 1.4 table; CERTIFIED requires E4. **Urgent (2026-09-27):** watsonx.ai `guided_json` can constrain model output to this schema, so D1 now gates the cleanest output-validity story we have — not just the tier display. See `docs/watsonx-integration.md` §4 |
+| **D1** | E0–E6 tier semantics — undefined in the source (1.4) | ~~M7, M8, M9, M16~~ **all unblocked** | **RATIFIED 2026-09-27 (Session 21):** the 1.4 table as written, `CERTIFIED` requires E4. The ladder is *our* proposal — the source names it and never defines it — so that provenance must travel with every artefact that shows a tier. Three consequences in 1.4: the tier is **derived by M8, not carried on a finding** (so `findings.schema.json` keeps no `evidence_tier`, and M1's deferred `CERTIFIED ⇒ E4` constraint is now unblocked); M7a cannot exceed E4 (§1.8.4); watsonx.ai `guided_json` can now be pointed at a schema whose tiers mean something. See `docs/watsonx-integration.md` §4 |
 | **D2** | The 7th adversarial failure class — source names six (1.6) | M7 | Ship six; say "six" in the pitch |
 | **D3** | Verdict aggregation + whether CONDITIONAL may pass the gate (1.5) | M8, M9 | REJECTED blocks; CONDITIONAL needs a ledger entry |
 | **D4** | Demo repo target — needs real acceptance criteria to attest against | M4, M5, M13 | Smallest repo with genuine written criteria; inject payloads until chosen |
 | **D5** | Stryker corroboration of mutation ground truth | M13 | Stretch — harness first, corroboration if time |
-| **D6** | Where read-only is enforced: worker startup vs pipeline wrapper | M7, M10, M12 | Assert at worker startup, fail closed. **Mechanism now specified (2026-09-27):** read-only bind mount of the workspace + a pre-flight capability check, modelled on watsonx Orchestrate's tool sandbox, which runs Python tools in a read-only filesystem. `ToolPermission.READ_ONLY` is deprecated and is *not* a live control — do not cite it. See `docs/watsonx-integration.md` §6 |
+| **D6** | Where read-only is enforced: worker startup vs pipeline wrapper | M7, M10, M12 | Assert at worker startup, fail closed. **Mechanism now specified (2026-09-27):** read-only bind mount of the workspace + a pre-flight capability check, modelled on watsonx Orchestrate's tool sandbox, which runs Python tools in a read-only filesystem. `ToolPermission.READ_ONLY` is deprecated and is *not* a live control — do not cite it. See `docs/watsonx-integration.md` §6. **Session 20 (M12) accepted the recommended default and built the pre-flight:** `enforce_worker_read_only(declared, workspace)` resolves the worker's own `ATTESTOR_CAPS` declaration and probes the mount, failing closed on both. The call site remains M7/M10's, so D6 is *answered, not closed* |
 | **D7** | Webhook signature verification, and behaviour with no secret configured | M15 | Verify when a secret exists; allow injection when not |
 | **D8** | Cross-file hash chain format | M9, M14 | Each artifact carries the previous digest |
 | **D9** | `status` lifecycle values (1.2) | M9, M10, M15 | The PROPOSED set in 1.2 |
@@ -958,7 +1140,8 @@ record that you did.
 | **D11** | Per-run token/cost ceiling | M7, M11 | Hard cap per criterion group; report spend per run. **Data source now known:** every watsonx.ai response carries `usage.{prompt_tokens, completion_tokens, total_tokens}`, so only the policy is open. See `docs/watsonx-integration.md` §5 |
 | **D12** | M7 demo scope if the clock slips | M7, M18 | 1 criterion group, 2 probes, mock-first |
 | **D13** | GitHub write-back (comment + check run) | M15 | Stretch — after the API serves real data |
-| **D15** | The emitted artefact envelope, review-debt ledger, ingest bundle, and `ast` have no contract. This blocks M9 (emitter), M14 (artifact store), and the receipt renderer's consumer wiring. The `criteria[]` and `findings[]` array wrappers are also uncontracted (the item schemas exist; the array envelopes do not). | M9, M14, M1 (next pass) | M1 adds them when the first producer lands, request-first per §0.4. Recommended default: hold; do not invent a shape without a real emitter to validate against. |
+| **D15** | The emitted artefact envelope, review-debt ledger, ingest bundle, and `ast` have no contract. This blocks M9 (emitter), M14 (artifact store), and the receipt renderer's consumer wiring. The `criteria[]` and `findings[]` array wrappers are also uncontracted (the item schemas exist; the array envelopes do not). | M9, M14, M1 (next pass) | **OPEN — and now specified (Session 21).** M1 owns `contracts/` alone, so this is a formal request, not something M9 may invent. What M9 needs, in the order it needs it: (1) an **artefact envelope** — `run_id`, `status`, `measured`, `verdicts[]`, plus `traceability`, `ledger`, `exposure`, `attestor_policy`, `signed`, `exit_code`; (2) a **review-debt ledger** — one entry per `CONDITIONAL` criterion (D3 makes an unrecorded conditional a contract violation, so the shape is load-bearing, not cosmetic); (3) the **ingest bundle** — `requirement` + `files[]` where each entry must distinguish *measured* from *unreached and why* (never a silent empty string); (4) the **`ast`** entry shape. Two hard constraints on the answer: **M3's models are `extra="forbid"`**, so M9's record cannot be loaded into `RunRecord` unprojected — `schemas.py` says so at lines 17–24 — and `write_artifact` prepends `sha256`, so the reverse projection is needed too. Recommended default stands (**hold; do not invent a shape without a real emitter to validate against**) — but the emitter now exists in draft, so the request is answerable rather than hypothetical |
+| **D16** | **Two verdict vocabularies in two keys, and the dashboard renders the wrong one.** M8's run-level `verdict` is **uppercase** (`REJECTED` — it is the `verdict` enum). `run.schema.json` carries **no aggregate verdict field at all**; the only run-level key is `status`, which D9 makes **lowercase** (`rejected`). `App.jsx:23` passes `run.status` into `<VerdictBadge>`, and `VerdictBadge.jsx:2` compares it against the **uppercase** enum — so a D9-conformant `"rejected"` matches neither branch and renders **orange**, the `PENDING` colour. A perfectly correct M9 record would make the demo's rejected run look undecided. | M8, M9, M15, M16, and M1 (a contract) | **OPEN. Do not paper over it in one module.** Three owners, one question: does `run` gain an aggregate `verdict` field (uppercase enum, alongside `status` as the lifecycle), or does `status` change case, or does `VerdictBadge` grow its own mapping? M1 owns the contract, M15 owns the router, M16 owns the component. Recommend the first — a lifecycle (`queued`→`running`→`rejected`) and a verdict (`REJECTED`) are different concepts and forcing one key to carry both is what produced the orange badge. **Until it is decided, M8 must emit `verdict` and must not assume anything about `status`**, and any artefact showing a tier or verdict must label the vocabulary's provenance per §1.4 |
 
 ---
 
@@ -1305,3 +1488,63 @@ kept out of this file, per Session 19's precedent.
 - **§1.7 is the demo contract** for R4's target outputs. Budget: **3h build / 2h rehearsal**
   (authorized deviation from Convention 6's nominal final-4h). D1 rides the `M4-ingest` merge;
   no contract changes are planned, so the validator stays 6/6 throughout.
+*MERGE (M4-ingest, Session 25): the two entries below landed via this merge — branch-numbered Sessions 19/20 from Aixxn's lane (M2 corpus, M12 policy). Subtitles disambiguate them from main's same-numbered sessions; kept verbatim per the Session 20 precedent.*
+
+### 2026-09-27 — Session 19: M2 — demo corpus landed (commit `88095b2`)
+
+- **M2 implemented.** 6 files: 3 fixtures, the served copy under `frontend/public/`, the
+  shared guard `test_schemas_contracts.py`, and this file. No router, no contract, no
+  dependency, no new `.md`. Acceptance criteria 2–5 met; **criterion 1 stays open** because
+  `frontend/src/fixtures.js` is M16's file and `App.jsx` still imports it.
+- **Two decisions were taken by default because their owners were unreachable**, per §6, and
+  are recorded rather than assumed: **D1** (CERTIFIED requires E4 minimum, applied to fixture
+  data only) and **D9** (`status` takes the §1.2 lowercase lifecycle, hence `"rejected"`).
+  Neither is ratified, so **no test asserts either rule in general** — only what this fixture
+  does. That is deliberate: a provisional decision must not calcify into a contract.
+- **Open question this session could not settle for the project, recorded rather than
+  decided unilaterally:** the acceptance checkboxes are now marked *inconsistently*. Criteria
+  4 and 5 are ticked although each is half done (the data landed; the dashboard wiring is
+  M16's), while criterion 1 is left unticked although it is also half done. Both situations
+  are the same, and they are marked differently. Either convention is defensible — tick when
+  the module's own deliverable exists and file the downstream wiring as a request, or tick
+  only when the stated outcome is achieved end-to-end — but the mix is not, and M1, M3, M14
+  and M16 will all hit the same question. **This belongs in §0.3 as a stated rule, decided
+  once by the project, not per module.**
+- **Three M16 requests filed** (see the M16 section): delete `fixtures.js` and fetch the
+  served copy; feed the exposure fixture to `ExposureCard`; and a verified defect —
+  `App.jsx:23` passes `run.status` into `VerdictBadge`, which compares it against the
+  *uppercase* verdict enum, so a D9-conformant `"rejected"` renders **orange**, the `PENDING`
+  colour. Root cause is deeper than case: `run.schema.json` carries no aggregate verdict
+  field, so a lifecycle string is rendered by a verdict renderer, and no product code
+  computes `status` at all today.
+- **Not archived here:** the §M2 "Landed" block and the M16 requests were committed with the
+  code in `88095b2`. `AGENTS.md` is gitignored and so is not in any commit.
+
+### 2026-09-27 — Session 20: M12 attestor read-only policy (`9c7343d`, branch `M12-attestor`)
+
+- M12 only; no endpoint, contract, schema, or dependency touched. Stdlib only.
+- `GRANTS` gained **`llm_egress`** because M7b workers call watsonx.ai themselves
+  (`docs/intent-attestation-gate.md:33` already said so — this ratified the spec rather than
+  inventing it). Named for the capability kind, never a host: egress must cover both the auth
+  and inference endpoints and the region is env config, so a host-bearing token would need a code
+  change per region. A blanket `network` grant stays rejected and is pinned — open egress would
+  let a worker exfiltrate the source it reads, which is the read-only claim itself.
+- **Decision taken deliberately before M7, not after it failed:** the vocabulary question was
+  settled while nothing depended on it, precisely so M7b would not meet a `PermissionError` at
+  worker startup and be tempted to loosen the policy under deadline. Widening the policy is
+  mutation-tested at 22 failures, so it cannot happen quietly.
+- New `backend/app/attestor/sandbox.py` supplies the half that was missing entirely: proof that
+  the workspace is read-only, by attempting the forbidden write. Without it, withholding `edit`
+  while the workspace is writable was theatre.
+- **AC status: 1 and 3 are partly open** — the primitive and the record fragment exist and are
+  pinned, but the worker-startup call is M7/M10's file and the `attestor_policy` key is M9's.
+  Neither was faked into a stub that M7/M9 would delete.
+- **New forward dependency:** M7b now hard-depends on M10 provisioning a read-only workspace.
+  If M10 probes before mounting, the worker refuses to start — correct, and it looks like a bug.
+- **Open, and a hard blocker on M7b shipping rather than a follow-up:** the egress allowlist does
+  not exist, so `llm_egress` is declared and enforced by nothing. Also unresolved: the
+  `--disable-subagents` vs granted-`subagent` tension, kept-as-is since Session 7.
+- **Honest gap:** no test has watched a real read-only mount refuse a write. Production refuses
+  via `EROFS`; every refusal test gets `EACCES` from a `chmod 555` directory. Dropping `EROFS`
+  does fail the suite (2 tests), so the translation is pinned — but that is substitution, not
+  observation. M17's to close.
