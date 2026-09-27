@@ -893,6 +893,18 @@ failure** on both legs (the failure re-proven pre-existing on parent
   worth a test rather than a paragraph. **This is the payoff of flagging the risk:** the
   unrun POSIX path was named in the PR body before CI ran, and the first thing CI found
   was exactly there.
+- **CI after the fix (both legs): `1 failed, 242 passed, 1 skipped`, identical on 3.11
+  and 3.12.** The single failure is the pre-existing §11.15 parity red. The one skip is
+  the Windows-only ACL residual test, which correctly declines to run on Linux — and
+  its counterpart, the POSIX-only unlink test, correctly runs there. **So the two
+  platform branches are each proven on their own platform and each skipped on the
+  other, which is the strongest statement this suite can make about a
+  platform-dependent control.** The `_deny_write_posix` recursion and the deep restore
+  are therefore verified code rather than unrun code, and the "220 passed" figure
+  earlier in this entry is superseded by CI's 242 on the two legs that run the POSIX
+  path. Local Windows remains **221 passed / 22 stated skips / 1 failed** — a
+  different, smaller set, and the difference between the two numbers is exactly the
+  platform split, not drift.
 - **Guards: 20 added, and what each is for.** `test_policy.py` 75 → 86 (provisioning:
   makes a writable workspace refuse; leaves the read side working; refuses every write
   shape it claims to; does not touch a workspace that already refuses; names the control
