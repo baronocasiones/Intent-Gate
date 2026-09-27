@@ -824,3 +824,10 @@ failure** on both legs (the failure re-proven pre-existing on parent
 - **New convention worth carrying:** when product code gains a side effect (DB/artifact/queue),
   isolate it in the autouse conftest rather than in each test — one patch point, and the
   cleanliness gate stops depending on every future test author remembering Convention 3.
+
+### 2026-09-27 — M17: Windows-proofing test_policy.py (branch `m17-policy-windows`)
+- **Baseline:** `test_policy.py` failed on Windows at `main` — M12's POSIX read-only probe vs Windows not enforcing directory `chmod`; plus one missing-symlink-privilege failure at fixture setup. **Fix is test-only** (rule 8, no product code).
+- **Fixes, in order:** `dd5e9a8` — capability check in `ro_workspace` (probe write attempted; stated skip where the platform accepts it), `ro_mode_workspace` for the three consistency tests, ELOOP stated skip. Post-merge run — `SKIP_NO_STATVFS` on three of #49's mount-corroboration tests (they pin Linux's real `os.statvfs` reading; Windows has neither `os.statvfs` nor `os.ST_RDONLY`, and the product's `undetermined` answer is correct but not what they assert).
+- **Post-merge result (Windows):** **223 collected → 201 passed, 21 skipped, 1 failed** — every skip carries a stated reason; the single failure is §11.15 (`test_demo_traceability_fixture_loads_into_model`, pre-existing main parity, owners M2+M3). Validator exit 0 (6/6). **Pre-merge** at `dd5e9a8`: `179 passed, 12 skipped` of the then-191-test suite, validator 6/6.
+- **Merge with `origin/main` (`d6b7139`):** 3 conflicts in `test_policy.py`, all keep-both — two docstring blocks (union: #49's five-OS-substitution inventory + this branch's three-hazard count and ELOOP note) and the ungated-record region (#49's four new tests kept; this branch's `ro_mode_workspace` swap kept, because the merged body references that fixture).
+- **Linux CI expectation:** every refusal case and all three mount-corroboration tests run for real (skip conditions fire only where the platform cannot produce the observation); the same §11.15 parity red as `main`, nothing else.
