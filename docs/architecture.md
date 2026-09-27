@@ -198,6 +198,29 @@ wired yet.
     - Each CI run re-resolves transitives, so this week's green and last week's green are not evidence about the same set. A future break can arrive with no code change at all.
     The only symptom available today is a **warning count**: `StarletteDeprecationWarning` appears on 3.10/3.12/3.14 (starlette 1.7.0) and not on 3.11.9 (1.0.0). That is the canary, and it is how this was found — recorded because the honest fix is a **decision** (add explicit transitive pins, or commit a lockfile), not a patch, and because it should be settled **before** the branch is pushed rather than after the first mystery CI failure. Details and the four-interpreter table in `docs/test-suite.md`.
 
+    **CLOSED 2026-09-27 (Session 21 follow-up, on explicit user instruction).**
+    `backend/requirements.txt` now pins **all 23 transitive dependencies** beneath the
+    unchanged 7 direct pins. The set was frozen from a clean 3.12.14 install and verified
+    byte-identical on 3.14.7; four lines carry `python_version` markers because that is
+    where pip genuinely diverges by interpreter (`backports.asyncio.runner`,
+    `exceptiongroup`, `tomli` exist only below 3.11; `rpds-py` moved its floor, so 3.10
+    takes 0.30.0 while the rest take 2026.6.3). A flat freeze with no markers would **not
+    install on 3.10** — the markers are load-bearing, not decoration. Proven by deleting
+    all four venvs and rebuilding from THIS file, including a **brand-new clean 3.11.9
+    venv** that replaces the polluted global env as the reference leg: 118 passed +
+    validator exit 0 on 3.10.21 / 3.11.9 / 3.12.14 / 3.14.7, with the 3.11/3.12/3.14 stacks
+    byte-identical and 3.10 differing by exactly the four marked lines.
+    **Ownership note:** `requirements.txt` is M17's exclusive file (`modules.md` §0.4)
+    and was edited here on the user's direct instruction to do §11.14 now — M17 to
+    review and adopt. The remaining warning-count skew after pinning (13 on 3.14 vs 14
+    elsewhere) was chased to source and is **benign**: `test_schemas_contracts.py:35`
+    annotates a helper `-> jsonschema.RefResolver`, and **PEP 649** (deferred annotation
+    evaluation, new in 3.14) means the annotation is never evaluated at `def` time on
+    3.14 — proven with a probe script (`/tmp/opencode/pep649_probe.py`: 1 warning on
+    3.12, 0 on 3.14 for the identical `def`). The annotation is never introspected, the
+    function behaves identically, and the real runtime access at line 40 still warns on
+    all four legs. Recorded because a count difference gets a source, not a shrug.
+
 ## 12. Monorepo layout (as on disk)
 
 ```
@@ -729,3 +752,6 @@ was correct throughout; the drift was entirely in prose. All ten are now correct
   still gates Wave 1.** M1 was in fact built at Session 18, so Wave 0 is down to **M11 and
   M12**. Nothing in this session moved the critical path; it made the existing claims
   trustworthy enough to build on.
+- **Follow-up the same day (user instruction: §11.14 now, §11.12 when unblocked):** the
+  pinning decision is **taken** — §11.14 above is marked CLOSED with the evidence. The
+  §11.12 guards remain open per the instruction, owner still unassigned.

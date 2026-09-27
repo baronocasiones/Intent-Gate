@@ -8,7 +8,11 @@ Status: **scaffold + architecture-derived unit tests + M1 contracts guard + M3 p
 for all six contracts** — **118 tests** (79 pre-existing + 10 M1 + 21 M3 + 6 for the
 `Finding` mirror + 2 M1-mandated parametrizations). Last verified 2026-09-27 on **four**
 interpreters, not one: **3.10.21 · 3.11.9 · 3.12.14 · 3.14.7** — 118 passed on every
-leg, validator exit 0 on every leg. 3.11 + 3.12 remain the CI matrix; 3.10 is the
+leg, validator exit 0 on every leg, each from a **clean venv built from
+`backend/requirements.txt`** (the 3.11 leg is a fresh venv, not the polluted global
+pyenv env). Since the Session 21 follow-up the file pins all 23 transitive deps, so
+every leg installs the same stack — 3.11/3.12/3.14 byte-identical, 3.10 differing by
+exactly the four marked lines. 3.11 + 3.12 remain the CI matrix; 3.10 is the
 documented dependency floor and 3.14 is a deliberate forward-compatibility leg, and
 **both are green today but enforced by nothing** — widening `tests.yml` is a **decision
 owed**, not a fix (see Known gaps). 3.13 has no interpreter on this machine
@@ -156,6 +160,23 @@ the attestor box ↔ `test_policy.py`, the metering note ↔ `test_llm.py` /
   patch: add explicit transitive pins (or a lockfile) to `requirements.txt`.
   **Worth doing before the branch is pushed**, because it is the difference
   between a CI matrix that tests something repeatable and one that does not.
+  **CLOSED the same day (Session 21 follow-up, on explicit user instruction):**
+  `requirements.txt` now carries all 23 transitive pins under the unchanged 7
+  direct ones, with four `python_version` markers where pip genuinely diverges
+  (sub-3.11 backports + the `rpds-py` floor move). Proven by deleting every venv
+  and rebuilding clean on **3.10.21 / 3.11.9 / 3.12.14 / 3.14.7** from the file —
+  118 passed + validator exit 0 on each, 3.11/3.12/3.14 byte-identical,
+  3.10 differing by exactly the four marked lines. The 3.11 leg is now a **clean
+  venv**, not the polluted global pyenv env (which carries dozens of unrelated
+  packages and can never be a reference leg again). **Ownership note:**
+  `requirements.txt` is M17's file (`modules.md` §0.4); edited here on the user's
+  direct instruction, M17 to review and adopt. The leftover warning skew (13 on
+  3.14 vs 14 elsewhere) is **explained, not open**: it is PEP 649 — 3.14 defers
+  the `-> jsonschema.RefResolver` annotation at `test_schemas_contracts.py:35`,
+  so the deprecated attribute is never touched at `def` time there. Proven with
+  `/tmp/opencode/pep649_probe.py` (1 warning on 3.12, 0 on 3.14 for the identical
+  `def`); the annotation is never introspected and the runtime access at line 40
+  still warns everywhere. No action owed.
 - **The CI matrix (3.11 + 3.12) does not cover the versions this session verified.**
   3.10 is the documented dependency floor (`docs/test-suite.md` Known gaps, carried
   since Session 13) and 3.14 is where the `asyncio.iscoroutinefunction` removal
@@ -498,3 +519,8 @@ executed this workflow.
   the mirrors still have **zero product callers** (§11.10) — so none of this moves the
   critical path. Wave 0 (**M1, M11, M12**) still gates Wave 1, and M1 was already built
   at Session 18.
+- **Follow-up the same day (user instruction: do §11.14 now, defer §11.12):** the
+  transitive-pins decision is **taken and implemented** — `backend/requirements.txt`
+  now pins all 23 transitives (4 with `python_version` markers), proven by rebuilding
+  all four venvs from the file. The Known-gaps bullet above is closed; the §11.12
+  guards stay open pending the ownership question, exactly as instructed.
