@@ -1,0 +1,14 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Finding",
+  "description": "One probe result against one criterion. `result` is deliberately unenumerated: its vocabulary belongs to M7, not M1. `evidence_tier` is expected alongside it but is NOT in `required` and NOT in `properties` — the E0-E6 ladder is undefined in the source and is decision D1. Do not add it, or any tier constraint, until D1 is ratified.",
+  "type": "object",
+  "required": ["criterion_id", "probe", "result", "location", "note"],
+  "properties": {
+    "criterion_id": { "type": "string" },
+    "probe": { "enum": ["CODE_SEARCH", "LOGIC_TRACE", "STATE_CHECK", "ERROR_PATH", "ABSENCE_CHECK"] },
+    "result": { "type": "string" },
+    "location": { "type": "string" },
+    "note": { "type": "string" }
+  }
+}
