@@ -5,18 +5,56 @@ lives in `docs/architecture.md` (code-faithful) and `docs/intent-attestation-gat
 (concept); this file records only how the suite is organized, run, and extended.
 
 Status: **scaffold + architecture-derived unit tests + M1 contracts guard + M3 parity guard
-for all six contracts** — **118 tests** (79 pre-existing + 10 M1 + 21 M3 + 6 for the
-`Finding` mirror + 2 M1-mandated parametrizations). Last verified 2026-09-27 on **four**
-interpreters, not one: **3.10.21 · 3.11.9 · 3.12.14 · 3.14.7** — 118 passed on every
-leg, validator exit 0 on every leg, each from a **clean venv built from
-`backend/requirements.txt`** (the 3.11 leg is a fresh venv, not the polluted global
-pyenv env). Since the Session 21 follow-up the file pins all 23 transitive deps, so
-every leg installs the same stack — 3.11/3.12/3.14 byte-identical, 3.10 differing by
-exactly the four marked lines. 3.11 + 3.12 remain the CI matrix; 3.10 is the
-documented dependency floor and 3.14 is a deliberate forward-compatibility leg, and
-**both are green today but enforced by nothing** — widening `tests.yml` is a **decision
-owed**, not a fix (see Known gaps). 3.13 has no interpreter on this machine
-and is untested.
+for all six contracts + the M12 attestor mechanism/record suite + M14 persistence guards** —
+**223 collected: 222 passed, 1 failed, 0 skipped.** The one failure is **pre-existing and
+inherited from `main`** (recorded below and as §11.15 by M14 independently); `test_policy.py`
+is **75 passed, 0 failed, 0 skipped** and is byte-identical to the tree whose guards were
+mutation-proven.
+
+**Composition, and it closes exactly** (both branches were cut from `4b03c55`, so their
+deltas are separable and the arithmetic is a check rather than a guess):
+```
+  180   4b03c55  — the merge base, measured directly in a throwaway worktree
++  12   M12       — test_policy.py 63 → 75
++  31   M14       — test_store_db.py 9 → 33, plus new test_store_records.py (+7)
+= 223   measured, on both matrix legs
+```
+**M14's own log states its contribution as "+40", and that is wrong by 9.** It counted the
+*final size* of its two files (33 + 7 = 40) as its *delta*, but `test_store_db.py` already
+held 9 tests at `4b03c55` from an earlier module, so the real delta is **+31**. Its implied
+baseline of ~171 is therefore not a real count; **180 is**, confirmed by direct measurement
+rather than by picking a side. Not a functions-vs-items confusion either — at `4b03c55` there
+were 180 items against 165 `def test_` functions (a 15-case parametrised spread), and 171 is
+neither number. Recorded rather than edited: the M14 entry is not this session's to rewrite
+(append-only, and it is another module's log), so the correction lives here and in the M12
+entry below. **Third count in three sessions to be wrong in-tree, and all three were
+"contribution" figures rather than totals** — a total is measured, a contribution is
+arithmetic, and the arithmetic is where the errors are.
+
+Last verified 2026-09-27 on **both CI-matrix legs — 3.11.16 and 3.12.14**, `1 failed, 222
+passed` **identical on each**, validator exit 0 with `OK 6/6 schemas covered` on both, and
+**0 skipped measured via `-rs`** (no skip section at all, so it is observed rather than
+inferred). 3.14.7 was also green pre-merge at 192/191 and is a deliberate
+forward-compatibility leg. Run as **uid 1000, not root**, so all 21 `SKIP_AS_ROOT`-decorated
+cases actually executed rather than skipping — the 0555-directory and `EACCES` paths were
+genuinely exercised, which is the stronger result. **Zero residue**:
+`find . -name '.attestor_write_probe'` returns nothing, no `attestation.db`, no `artifacts/`,
+and the tree was clean before and after. 3.10 is the documented dependency floor and 3.14 a
+forward-compat leg, and **both are green but enforced by nothing** — widening `tests.yml` is
+a **decision owed**, not a fix (see Known gaps). 3.13 has no interpreter and is untested.
+
+> **The one failure, stated precisely, because "unfinished work" is the wrong label.**
+> `test_models_parity.py::test_demo_traceability_fixture_loads_into_model` asserts every
+> link in `fixtures/demo_traceability.json` is tier `E0`, but M2's realistic corpus
+> (`88095b2`, merged as `4b03c55` = HEAD) set them to **E4 and E2** and updated
+> `test_schemas_contracts.py` — **not** `test_models_parity.py`. It is a **missed test-guard
+> flip (rule 4 / Convention 10) in a merge**, not a stub that later work will resolve, and
+> it is **two** stale assertions (lines 385 and 387; the `locations == []` one fails next),
+> not one. Proven pre-existing by running the suite against a pristine `git archive HEAD`
+> extraction: `1 failed, 179 passed` — same test, same failure, with M12 absent.
+> **Not actioned by this session:** `test_models_parity.py` is M3's file (§0.4) and the
+> fixture is M2's, so fixing it from here would be a two-owner edit. Owner: M3, one line,
+> and it needs a decision rather than a green-washed rerun.
 
 **M14 (2026-09-27, this session):** the suite is **210 tests** — the 118 baseline
 moved (`main` gained M2-fixture PR #43 and fix PR #46). **209 pass + 1
@@ -80,10 +118,11 @@ backend/tests/
   test_gates.py                    §3 stage stubs: shapes, stage order, exit_code=1 blocks
   test_pipeline.py                 §1/§4 chain + persist/submit/worker/lifespan (R1), run-id format, both §11.1 tests flipped
   test_ingest.py                    M4 real Stage-1 ingest guard (102 tests — Session 25's Layout entry was missed here; added with the M10 lane's Status recompute)
-  test_policy.py                   §8 attestor GRANTS/DENIES exact sets, fail-closed both ways
-                                   — Session 20: 9 → 63 tests. Adds the declaration resolver,
-                                   the worker-startup gate, the workspace read-only proof
-                                   (EROFS/EACCES, undetermined, no-residue), and the auditor record
+  test_policy.py                   §8 attestor: the 5-grant/2-deny sets, fail-closed both ways, the
+                                    worker-capability resolver, the real workspace write-probe
+                                    (which mechanism refused + the mount's own ST_RDONLY answer),
+                                    and the auditor record M9 embeds — 75 tests after the M12
+                                    follow-up (#49), up from 63
   test_metric.py                   §9 seven operators, rate math, exposure-schema conformance
   test_llm.py                      §7 mock determinism; watsonx fails loud; zero-network proof
   test_schemas_contracts.py        §10 pydantic↔contract parity, fixture validation, validator wrap
@@ -114,7 +153,7 @@ needs network access, a database file, or watsonx.ai credentials.
 | §5 | API surface (health, webhook, runs, metrics) | `test_api.py` |
 | §6 | persistence (SQLite WAL, hash-sha256 artifacts) | `test_store_db.py`, `test_store_records.py` |
 | §7 | LLM dual-mode + spend discipline | `test_llm.py` |
-| §8 | read-only attestor (the differentiator) | `test_policy.py` |
+| §8 | read-only attestor (the differentiator) | `test_policy.py` (declaration + observation + record) |
 | §9 | false-certified-rate metric (the "THE NUMBER") | `test_metric.py` |
 | §10 | contracts (6 schemas), fixtures (2), validator (6 pairs + coverage check) | `test_schemas_contracts.py` |
 | §11 | honest gaps — characterized, not hidden | `test_pipeline.py` (queue wired R1: §11.1 closed, §11.2/§11.5 callers landed), `test_llm.py` (spike pending) |
@@ -177,6 +216,19 @@ the attestor box ↔ `test_policy.py`, the metering note ↔ `test_llm.py` /
     This is not hypothetical: the 3.11.9 leg initially resolved `starlette 1.0.0`
     while the 3.12.14 venv resolved `1.7.0`, because `starlette` is transitive
     and unpinned.
+11. **Absence of evidence is three-valued, and never rounds down to a finding**
+    (Session 22). When a second, corroborating reading is added next to a
+    control — `mount_readonly` beside the refused write — "we could not ask" must
+    be `None`/`null` and not `False`, or an unaskable platform starts asserting a
+    fact about a mount nobody read. Assert with `is None`, never `not ...`, so
+    the falsy value cannot satisfy the test. Corroboration **never gates**: if the
+    corroboration were required, a platform without the call would refuse to start
+    and the refusal would say nothing about whether the control held. The control
+    keeps gating on its own evidence; the second reading only makes the record
+    more specific. The mirror-image rule is that a corroborating reading must not
+    be allowed to *override* the control either — a flag claiming a read-only
+    mount on a directory that just accepted a write is a fail-open, so the
+    precedence is asserted in the test that makes the two disagree.
 
 ## Known gaps (not covered yet)
 
@@ -186,6 +238,18 @@ the attestor box ↔ `test_policy.py`, the metering note ↔ `test_llm.py` /
   hard-coded values), `watsonx_client` past the key check, the `_dist`
   three-level-climb defect in `main.py` — characterized or explicitly
   untested, never asserted as correct.
+- **`app.attestor` has no non-test caller** (Session 22). `enforce_worker_read_only`
+  is covered thoroughly here and invoked by nothing — the wiring belongs to M7/M10,
+  and M9 owns embedding `PolicyRecord.to_dict()` in the emitted record. The gap is
+  recorded in `architecture.md` §11.5. It is a wiring gap, **not** a coverage gap,
+  and the distinction matters: adding a caller from this session would have meant
+  editing another module's exclusive file (rule 7).
+- **The positive read-only-mount case is unreachable without root**
+  (`architecture.md` §11.5's mount gap, adjacent). No test can put `tmp_path` on a
+  read-only mount, so `mount_readonly is True` is covered by substituting
+  `os.statvfs` — named as a substitution in the test, per the module docstring's
+  inventory. A real mount is not something CI can produce, so the reading stays
+  synthetic; when M10 deploys the D6 bind mount, that is where it gets proven for real.
 - **Async jobs/worker**: `jobs.worker()` is an infinite loop with no test
   harness yet — add one when the queue is wired.
 - **Python 3.10 floor**: dependency floor (fastapi/uvicorn/jsonschema/pytest
@@ -599,6 +663,176 @@ failure** on both legs (the failure re-proven pre-existing on parent
   all four venvs from the file. The Known-gaps bullet above is closed; the §11.12
   guards stay open pending the ownership question, exactly as instructed.
 
+### 2026-09-27 — M12: declaration, observation, and the mechanism between them
+
+> **Heading relabelled, content untouched.** This entry was "Session 22" until the merge
+> that unblocked PR #48: `main` independently carries *"Session 22: M14 persistence guards"*
+> from a parallel session, and two entries sharing a number in one log is a legibility
+> defect in a record whose premise is that claims must be checkable. Numbering dropped per
+> `AGENTS.md` Convention 18 (cite date + module). **Prose inside this entry still says
+> "Session 22"** and means this same entry — deliberately not swept, to keep the diff small
+> in a file with an incoming merge conflict. A recorded inconsistency, not a silent one.
+
+- **Target:** `backend/tests/test_policy.py`, the guard `modules.md` §0.2 assigns to M12.
+  **Code under test:** `attestor/policy.py` + `attestor/sandbox.py`. No other test file
+  needed to change, and no other module's file was touched.
+- **Three changes, three shapes of new test.** **A** (a refused write is two findings, so
+  the record names the mechanism and reports the mount's own `ST_RDONLY` answer) added the
+  mount-reading cases; **B** (the record names the workspace) added the path assertions;
+  **C** (the ungated path leaked a denied capability) added the raise cases. The A tests
+  are the ones worth arguing about, and the argument is in the tests themselves.
+- **The fail-open direction is the one tested for real.** `test_a_writable_workspace_
+  reports_a_writable_mount_too` reads a genuinely writable directory with no mock, because
+  a mount reading that only ever returns `False` would pass every test while claiming a
+  mount nobody asked about. `test_the_write_is_the_authority_and_the_mount_flag_cannot_
+  override_it` then makes the two disagree — the write lands, the flag claims ST_RDONLY —
+  and asserts the finding follows the write. That test is the whole reason the ordering
+  exists; an implementation that read the flag first would pass everything else here.
+- **The absent-answer path has its own test**, because it is where a three-valued field
+  usually degrades to two: `os.ST_RDONLY` is deleted and the result asserted with
+  `is None` rather than `not ...`, so the falsy value cannot satisfy it. Convention 11
+  records the generalisation.
+- **Three guards flipped deliberately, each labelled `CHANGED THIS SESSION` in place**
+  (rule 4 / `AGENTS.md` Convention 10): `test_probe_does_not_raise_for_an_ordinary_refusal`
+  (the `WriteProof` shape grew three keys), `test_enforced_record_shape_is_json_ready` and
+  `test_ungated_record_shape_is_json_ready` (`PolicyRecord` grew four). The old shapes no
+  longer describe what the code carries, and a shape test that checks only the old keys is
+  how a record quietly stops being evidence.
+- **A docstring claim that the change falsified, and an inventory recounted rather than
+  estimated.** The module docstring said *exactly one test substitutes the OS call*; there
+  are now five interactions substituted (one `Path.write_text`, four `os.statvfs`, one
+  `ST_RDONLY` deletion), each named where it happens. **The first draft of that recount
+  said three `statvfs` substitutions where there are four** — caught by grepping the file
+  instead of trusting the count in my head, and corrected before it was written into a doc.
+  A second overstatement: `test_the_two_readings_are_reported_separately_not_collapsed`
+  described a contrast between two deployments and asserted one, so it was rewritten to
+  actually make both readings and assert they differ.
+- **Convention 6 honoured:** no product code was changed to make a test pass, and no test
+  was weakened or skipped to reach green. The suite **grew** — the new cases are new
+  behaviour, and the three flips are shape widenings that keep every existing key.
+- **Left alone on purpose:** a pre-existing duplicated `@SKIP_AS_ROOT` decorator on
+  `test_enforce_workspace_readonly_returns_the_proof_on_a_read_only_workspace`. Harmless,
+  unrelated to this change, and fixing a line nobody asked about inside a diff about
+  something else is how diffs get unreviewable.
+- **Open at archive:** `app.attestor` still has **zero non-test callers** — a wiring gap in
+  M7/M10 and M9, not a coverage gap, and the distinction is recorded in Known gaps above.
+  The positive read-only-mount reading stays synthetic until M10 deploys a real D6 mount.
+
+### 2026-09-27 — M12 verification: 192 collected, 191 passed, guards proven
+
+> **Heading relabelled, content untouched** — see the note at the head of the preceding
+> M12 entry. This sub-entry was "Session 22 verification"; the number is gone for the same
+> reason and its prose still uses it to mean this session.
+>
+> **The 192 in this heading is a point-in-time figure** describing commit `936db35` before
+> the merge with `main`. It is preserved rather than rewritten, per the same rule this file
+> applies to every other historical number. **The shipped figure is 223 collected / 222
+> passed / 1 failed** — see the `Status:` block for the composition.
+
+- **Run as uid 1000, not root** — so all **21** `SKIP_AS_ROOT`-decorated cases executed
+  rather than skipping. That matters: the 0555-directory and real-`EACCES` paths are the
+  ones this change reasons about, and a root run would have skipped every one of them and
+  proved almost nothing. **Zero skips, zero residue** (`find / -name
+  '.attestor_write_probe'` → nothing), source tree byte-identical before and after.
+- **The CI matrix was satisfied, but only after provisioning it.** Neither 3.11 nor 3.12
+  was installed on this box (`python3.11`/`python3.12` absent, `pyenv versions` empty, no
+  conda/uv). **3.11.16 and 3.12.14 were built fresh from `backend/requirements.txt` into
+  `/tmp/opencode`** rather than accepting a 3.14.7 result as a pass — Convention 9 is
+  explicit that a single-version run is a statement about one interpreter, and the
+  platform-sensitive surface here is exactly the errno/`statvfs` behaviour. **Identical
+  `1 failed, 191 passed` on 3.11.16, 3.12.14 and 3.14.7**; validator exit 0 on each,
+  6/6 schemas.
+- **`test_policy.py`: 75 passed, 0 failed, 0 skipped** — baseline `4b03c55` was **63**, so
+  **+12**, all twelve passing.
+- **Convention 7 satisfied, with a control run and a false kill caught.** Seven mutations
+  were applied to a throwaway copy and each was required to kill a *named* test:
+
+  | Mutation | Guard that died | Verdict |
+  |---|---|---|
+  | M1 ungated `_refuse_leaked` commented out | `test_ungated_record_cannot_advertise_a_denied_capability`, `test_the_ungated_leak_check_is_not_a_completeness_check` | killed |
+  | M2 `_refusal_mechanism` always `no_write_bit` | `test_refusal_witness_is_the_errno_the_kernel_gave` | killed |
+  | M3 `MECHANISM_NO_WRITE_BIT` reworded to contain `read_only` | `test_mechanism_names_are_distinct_and_none_of_them_blurs_the_weak_one` | killed |
+  | M4 mount flag collapsed to two-valued on failure | both `..._undetermined...` tests | killed |
+  | M5 `writable = not mount_readonly` (the fail-open inversion) | `test_the_write_is_the_authority_and_the_mount_flag_cannot_override_it` | killed |
+  | M6 ungated `workspace_path=""` | `..._names_no_workspace_rather_than_an_empty_one`, `test_ungated_record_shape_is_json_ready` | killed |
+  | M7 ungated `workspace_mount_readonly=False` | same two | killed |
+
+  **7 mutations, 7 kills, no survivors.** M5 died on the author's own message —
+  *"the mount flag overrode a write that landed"* — which is the exact fail-open the plan
+  called impossible, so that one is not incidental.
+- **The harness's first score was a false kill, and the control run is what exposed it.**
+  M3's naive form (rename the constant in `sandbox.py` only) makes `test_policy.py`'s
+  `from ... import MECHANISM_NO_WRITE_BIT` fail at **collection** — pytest exit **2**,
+  **zero tests collected**. A harness scoring `rc != 0` as a kill would have credited the
+  guard with work it never did, which is the **same defect as Session 21's** first harness
+  reporting 7/7 false kills. The control run made it visible; the harness was then hardened
+  to accept only exit 0/1 plus a node id outside the known-baseline set, and M3 was
+  re-expressed semantically (rename **plus** a resolving alias) so the guard actually ran.
+  **Two sessions apart, the same harness bug — worth a standing rule, not a coincidence.**
+- **The repo was not clean when verification started, and that is this session's own diff.**
+  8 modified files, 875 insertions / 61 deletions, nothing staged, HEAD `4b03c55`, branch
+  `m12-attestor-policy`. An earlier verifier caught the tree being rewritten under it
+  mid-run (hashes changing between reads) and re-ran against a settled window; the reported
+  numbers are for the settled tree, and the source tree was byte-identical after every run.
+- **Not fixed, deliberately:** the one pre-existing failure. See the `Status:` block above —
+  it is a missed guard flip in the M2 merge, in M3's file, and it will not resolve itself
+  when other work finishes. **Filed here rather than left as a remembered red.**
+- **Delivery: `936db35`, PR [#48](https://github.com/baronocasiones/Intent-Gate/pull/48)
+  OPEN** from `m12-attestor-policy` against `main`. `test_policy.py` is 63 → **75** test
+  functions, a strict superset — `comm` against the merged baseline shows **12 added, 0
+  removed**, so nothing inherited was dropped.
+- **This file is the second of the two that block the merge.** `main` moved to `bf52608`
+  (M14, #47) and both sides append a session entry to this log's tail; the rebase was
+  attempted and **aborted** on append-vs-append, so `936db35` survives byte-for-byte.
+  Resolution is "keep both entries", and see the note in `architecture.md` for why that is
+  not purely mechanical: `main` already titles two of its entries *"Session 22"* and
+  *"Session 23"*, so this branch's *"Session 22"* collides with them and a keep-both merge
+  interleaves unrelated sessions out of date order. **A naming decision is owed, not just a
+  merge.**
+- **The count in the `Status:` block is the measured one, and it is worth restating its
+  composition** so the next reader does not have to re-derive it: 192 collected = 179 at the
+  `4b03c55` baseline **+ 12** from this session's `test_policy.py` **+ 1** from the M2
+  fixture merge, of which **1 is a pre-existing failure**. A bare count is how "118" went
+  stale twice in three sessions; the composition is what actually transfers.
+- **Post-merge addendum — the shipped tree is 223, and this session's 7/7 proof still
+  applies.** After merging `origin/main` (`bf52608`, M14) at `555f4da`: **223 collected, 222
+  passed, 1 failed, 0 skipped**, identical on **3.11.16 and 3.12.14**, validator exit 0 on
+  both. **`backend/app/attestor/{policy,sandbox}.py` and `test_policy.py` are byte-identical
+  to `936db35`** (blob hashes matched), so the mutation proof was not re-run and did not
+  need to be: the artefact that was proven is the artefact that ships. Re-proving ceremony
+  on an unchanged file would have been a way of appearing thorough.
+- **The merge also settled a cross-session count disagreement, by measurement.**
+  M14's log claims a contribution of **+40**; the real delta is **+31**, because
+  `test_store_db.py` already held 9 tests at the merge base `4b03c55`. Re-measured in a
+  throwaway worktree: **180 at `4b03c55`** is correct, and 180 + 12 + 31 = 223 closes
+  exactly. So M14's implied ~171 baseline was never a real count. **Recorded here rather
+  than edited in the M14 entry** — append-only, and it is another module's log. Worth
+  naming the pattern: this is the *third* wrong in-tree count in three sessions and **all
+  three were contributions, not totals.** A total is measured; a contribution is
+  subtraction, and the subtraction is where the errors live. When a session reports
+  "N tests, M of them new", check the arithmetic against a worktree before it is written down.
+- **The pre-existing failure has a second stale assertion, and it is currently invisible.**
+  `test_demo_traceability_fixture_loads_into_model` aborts at line 385, so line 387 never
+  executes — meaning **no run has ever reported it**. Both were evaluated read-only through
+  the model: `evidence_tier` is `['E4','E2']` against an all-`E0` expectation, and
+  `locations` is `[['src/refund.py:64'], ['src/refund.py:88']]` against an all-`[]`
+  expectation, so **both fail**. **The fix is one guard with two assertions, not one**, owned
+  by M2+M3. A reviewer patching only the line the failure names would ship a still-red
+  suite and conclude the fix did not work. (This correction supersedes the "lines 385 and
+  386" wording above: it is 385 and 387.)
+
+
+> **Merge point — both entries below are from parallel sessions on the same date, and
+> their order here is not a claim about sequence.** The M12 entries (above) and the M14
+> guard entry (below) were both branched from `4b03c55` and developed concurrently; the
+> merge resolved append-vs-append on this log's tail, purely additive, zero context lines.
+> **Both are kept whole.** M12 is placed first because that is the lower-risk edit inside an
+> already-conflicted file, not because it happened first. **Two useful agreements between
+> the sessions:** M14 independently predicted this exact conflict and named the Session 20
+> remedy, and M14 independently diagnosed the same single red test as **§11.15** (M2 fixture
+> drift from PR #43) and did not fix it either. The numbering scheme remains owed a decision
+> (`AGENTS.md` Convention 18).
+
 ### 2026-09-27 — Session 22: M14 persistence guards (32 + 7 tests)
 - `test_store_db.py` 9 → 32: env wiring (`_sqlite_path` table, default-from-URL, explicit-wins), `now_iso` str/UTC/ordering, `idx_runs_created_at`, commit-survives-reopen, `created_at` ISO-8601-str type pin (M14 AC 2 **and** M17's missing-coverage item — landed once, here), `set_status` rowcount-0 fail-closed signal, newest-first + limit, `prev_digest` default/threading, store-keys-win, and the D15 self-invalidating guard. **No existing test flipped.**
 - New `test_store_records.py` (7, M14-exclusive like M3's parity file): envelope reads, missing→`None`, the M3-obligation-1 projection whitelist (incl. subset tolerance while the envelope is uncontracted), strict-model loads incl. a mixed CERTIFIED/REJECTED record, missing→`None`, malformed→`ValidationError` (the `sandbox.py` posture).
@@ -776,3 +1010,11 @@ failure** on both legs (the failure re-proven pre-existing on parent
 - **The control run caught a harness artifact, which is the only reason it exists.** The first version of the copy omitted `frontend/` and reported *2 failed* — a false alarm that would have been recorded as a product defect. It was not: `test_schemas_contracts.py` pins `frontend/public/fixtures/demo_run.json` **byte-identical** to `fixtures/demo_run.json`, so a copy without `frontend/` cannot pass. Recorded because the useful output is the *consequence for M16* (the plan's "delete `fixtures.js`, read `public/`" must keep the `public/` copy, or flip a guard in the same change), not the harness bug.
 - **Cold E2E re-run** (server → `attest.py` → `GET /api/runs/{id}`): `rejected`, AC-1 `CERTIFIED@E4` at `src/refund.py:64`, AC-2 `REJECTED@E2` at `src/refund.py:88`, CLI exit 1, 404 on unknown id, empty server log. `--direct` runs with no server/network and leaves no state. **A run with no `.env`, no `MOCK_LLM` and no credentials also passes** — because no stage imports the LLM, so `select_client()` remains uncalled (§11.9 re-measured and confirmed: it has no product caller, only `test_llm.py` and `test_ingest.py`).
 - **No new tests added this session, deliberately** — nothing was fixed, so there is nothing new to pin. M17 is gate-keeper-only per the plan.
+
+### 2026-09-27 — merge of `origin/refactor` (M12 follow-up #49): 412/412, and the failures cancelled in both directions
+- **412 passed / 0 failed on 3.11.9 AND 3.12.14; validator `OK 6/6` exit 0 both legs; tree clean.** The count is **400 + M12's 12** — the incoming commit reported "+12 here" for `test_policy.py` (63 → 75), and the suite's own arithmetic closes exactly, which is the check that the merge did not silently drop a test file.
+- **Both sides' recorded counts were point-in-time and both moved.** This side measured 400 at `f5ca93b`; the incoming side measured 223 collected / 222 passed on a tree cut from `main` without the M4/R1/R2/R4 lanes. **The incoming side's one "pre-existing failure" — `test_models_parity.py::test_demo_traceability_fixture_loads_into_model`, §11.15 — does not exist on the merged tree**, because the M4 merge replaced that `E0` expectation. Two numbers that look contradictory were two different trees; the merged one is green.
+- **Six conflict regions, all documentation; the code auto-merged clean.** Resolved keep-both per the Session 20/25 precedent. Full per-region reasoning is in `docs/architecture.md`'s merge entry. The suite-relevant one: `test_policy.py`'s map row took the incoming description (75 tests, the refused-write mechanism and the mount's `ST_RDONLY` answer) and **kept our `test_ingest.py` row**, which the incoming tree has no counterpart for.
+- **The merge's own test-honesty check:** the 75 `test_policy.py` tests are real on the merged tree (counted from source: 75 `def test_`), and the full run exercises them — `0 skipped`, so none of the root-guarded cases silently stepped aside in this environment. That matters because the incoming commit had to run them `as uid 1000` to avoid exactly that; worth re-checking on any machine where the suite could skip rather than fail.
+- **Convention 6 re-audit on the merged tree:** zero skip/xfail markers, zero deleted test files, zero renames. `test_policy.py` grew 63 → 75 by addition, and the three guards the incoming commit flipped deliberately are flipped **in the same commit** as the code they pin (rule 7).
+- **Cold E2E re-proved after the merge** (a read-only-layer change is exactly the kind that should not move the demo, so it was measured rather than assumed): `rejected`, AC-1 `CERTIFIED@E4` at `src/refund.py:64`, AC-2 `REJECTED@E2` at `src/refund.py:88`, CLI exit 1, zero tracebacks.

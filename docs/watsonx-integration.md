@@ -173,6 +173,16 @@ asserts a `frozenset` against itself — `GRANTS = {read, subagent, skill, workf
 *"`assert_read_only` is test-only; pipeline never calls it."* **D6** asks where read-only is
 enforced. It currently is enforced nowhere.
 
+> **SUPERSEDED as an as-built claim, 2026-09-27 (Session 22).** The paragraph above is a
+> point-in-time snapshot and is deliberately left as written — this is a research dossier,
+> not the as-built record, and `docs/architecture.md` §8 is the authority on what the code
+> does. Three of its statements are now false: there are **five** grants rather than four
+> (`llm_egress` was added as an OS-level property, not a harness group), and the module is
+> no longer a set comparison against itself — `attestor/sandbox.py` exists and obtains
+> exactly the evidence §7 below asked for. What has **not** changed is the part that
+> matters: it is still enforced nowhere in the pipeline, and the D6 read-only bind mount
+> still does not exist. §7's recommendation is implemented; the control is still unwired.
+
 **[SOURCED]** watsonx Orchestrate ships the primitive:
 
 - **Python tools execute in an isolated container with a read-only filesystem.** The docs state
