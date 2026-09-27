@@ -1,0 +1,172 @@
+/* src/styles/tokens.css — "Instrument panel" design system
+ *
+ * Concept: an instrument panel for evidence. Monochrome ink-on-paper chrome,
+ * a black nav rail, ONE violet signal, mono for every number.
+ * Colour only where it means something: verdict pills carry semantics,
+ * violet marks interaction, everything else is ink, line and paper.
+ *
+ * Shape rule (followed everywhere): cards 12px · controls 8px · pills full.
+ */
+:root {
+  /* ---------- surfaces ---------- */
+  --bg-page:      #F7F7F8;
+  --bg-surface:   #FFFFFF;
+  --bg-sunken:    #F0F0F2;
+  --bg-inverse:   #131316;
+
+  /* nav rail */
+  --rail:         #16161A;
+  --rail-line:    #26262C;
+  --rail-text:    #FFFFFF;
+  --rail-dim:     #9A9AA6;
+
+  /* ---------- lines ---------- */
+  --border:        #E5E5E9;
+  --border-strong: #D6D6DC;
+  --border-inverse:#333338;
+
+  /* ---------- ink ---------- */
+  --text:         #131316;
+  --text-soft:    #55555F;
+  --text-muted:   #6B6B76;
+  --text-inverse: #FFFFFF;
+  --inverse-soft: #A1A1AA;
+  --inverse-dim:  #77777F;
+
+  /* ---------- the one accent ---------- */
+  --violet:         #5B3DF5;
+  --violet-hover:   #4A2FD9;
+  --violet-soft:    #EDE9FE;
+  --violet-on-dark: #9C86FF;
+
+  /* ---------- semantic pills (bg / ink) — these mean things ---------- */
+  --ok-bg:   #DBF2C9;  --ok-ink:   #33680A;
+  --bad-bg:  #F2C9C9;  --bad-ink:  #680A0A;
+  --warn-bg: #FFF2D7;  --warn-ink: #68470A;
+  --info-bg: #B9DCFB;  --info-ink: #0B3D91;
+  --idle-bg: #F1F1F1;  --idle-ink: #666666;
+
+  /* ---------- accents used by semantic surfaces ---------- */
+  --danger:         #8B1A1A;
+  --danger-hover:   #6E1414;
+  --ok-border:      #9FD47C;
+  --bad-border:     #E8A0A0;
+
+  /* ---------- shape ---------- */
+  --r-card: 12px;
+  --r-row:  10px;
+  --r-ctl:   8px;
+  --r-pill: 999px;
+  --r-logo:  6px;
+
+  /* ---------- type families ---------- */
+  --font-display: 'Space Grotesk', 'Poppins', system-ui, sans-serif;
+  --font-body:    'Hanken Grotesk', 'DM Sans', system-ui, sans-serif;
+  --font-mono:    'JetBrains Mono', 'Courier New', monospace;
+
+  /* ---------- type scale ---------- */
+  --fs-display: clamp(28px, 3.2vw, 44px);
+  --lh-display: 1.06;
+  --track-display: -0.03em;
+  --fs-stat:    clamp(40px, 4.5vw, 64px);
+  --fs-h2:      clamp(18px, 1.4vw, 20px);
+  --fs-body:    15px;  --lh-body: 1.55;
+  --fs-label:   12px;
+  --fs-meta:    13px;
+  --fs-mono:    13px;
+  --fs-micro:   11px;
+
+  /* ---------- spacing — 8px grid ---------- */
+  --s1: 4px;
+  --s2: 8px;
+  --s3: 16px;
+  --s4: 24px;
+  --s5: 32px;
+  --s6: 48px;
+
+  /* ---------- layout ---------- */
+  --sidebar-w: 264px;
+  --topbar-h:  60px;
+  --page-pad:  clamp(16px, 2.6vw, 40px);
+
+  /* ---------- motion ---------- */
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);
+  --dur-fast: 120ms;
+  --dur: 200ms;
+
+  /* ---------- elevation (elevated surfaces only — never on cards) ---------- */
+  --shadow-pop: 0 1px 2px rgba(19, 19, 22, 0.05), 0 12px 32px rgba(19, 19, 22, 0.10);
+}
+
+/* ---------- base reset ---------- */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body, #root {
+  height: 100%;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background: var(--bg-page);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: var(--violet-soft);
+  color: var(--text);
+}
+
+/* ---------- focus ring — one treatment everywhere ---------- */
+:focus-visible {
+  outline: 2px solid var(--violet);
+  outline-offset: 2px;
+}
+
+/* ---------- micro-label: mono, uppercase, wide — the instrument signature ---------- */
+.micro-label {
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-size: var(--fs-micro);
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+/* ---------- visually hidden but exposed to assistive tech ---------- */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ---------- identifiers and readouts align in columns ---------- */
+code, kbd, samp, pre {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- reduced motion ---------- */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

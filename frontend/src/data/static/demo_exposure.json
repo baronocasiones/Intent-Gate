@@ -1,0 +1,34 @@
+{
+  "false_certified_rate": 0.25,
+  "measured": true,
+  "by_operator": {
+    "boundary_drop": {
+      "certified": 1,
+      "total": 2
+    },
+    "comparison_inversion": {
+      "certified": 0,
+      "total": 1
+    },
+    "threshold_weakening": {
+      "certified": 0,
+      "total": 0
+    },
+    "error_path_deletion": {
+      "certified": 0,
+      "total": 1
+    },
+    "normative_demotion": {
+      "certified": 0,
+      "total": 0
+    },
+    "negative_constraint_removal": {
+      "certified": 0,
+      "total": 0
+    },
+    "untestability": {
+      "certified": 0,
+      "total": 0
+    }
+  }
+}

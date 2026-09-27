@@ -1,0 +1,210 @@
+.page {
+  padding: var(--page-pad);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+}
+
+/* Skeleton */
+.skeletonHeader {
+  height: 100px;
+  background: var(--bg-sunken);
+  border-radius: var(--r-card);
+}
+.body { display: flex; gap: var(--s4); align-items: flex-start; }
+.skeletonLeft, .skeletonRight {
+  flex: 1;
+  height: 300px;
+  background: var(--bg-sunken);
+  border-radius: var(--r-card);
+}
+
+/* Header card */
+.headerCard {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  padding: var(--s4);
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--s4);
+  flex-wrap: wrap;
+}
+.headerLeft { display: flex; flex-direction: column; gap: var(--s2); }
+.prLine { display: flex; align-items: center; gap: var(--s2); flex-wrap: wrap; }
+.prNum {
+  font-family: var(--font-display);
+  font-size: var(--fs-h2);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+.prTitle { font-size: var(--fs-body); color: var(--text-soft); }
+
+.headerMeta { display: flex; gap: var(--s4); flex-wrap: wrap; }
+.metaItem { display: flex; flex-direction: column; gap: var(--s1); }
+.metaVal { font-size: var(--fs-meta); }
+.mono {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  background: var(--bg-sunken);
+  padding: 2px 6px;
+  border-radius: var(--r-logo);
+  color: var(--text-soft);
+}
+
+/* Two-column body */
+.body {
+  display: flex;
+  gap: var(--s4);
+  align-items: flex-start;
+}
+.left { flex: 0 0 420px; display: flex; flex-direction: column; gap: var(--s2); }
+.right { flex: 1; min-width: 0; }
+
+/* Requirement list */
+.reqList { list-style: none; display: flex; flex-direction: column; gap: var(--s2); }
+
+.reqRow {
+  width: 100%;
+  text-align: left;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-row);
+  padding: var(--s3) var(--s4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  transition: border-color 0.1s, background 0.1s;
+}
+.reqRow:hover { border-color: var(--border-strong); }
+/* The selectable area — a button that does NOT wrap the include checkbox */
+.reqSelect {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  text-align: left;
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+.reqRowSelected { border-color: var(--violet); background: var(--violet-soft); }
+.reqRowExcluded { opacity: 0.55; }
+
+.reqTop { display: flex; align-items: center; justify-content: space-between; gap: var(--s2); }
+.reqId {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  font-weight: 600;
+  color: var(--text);
+}
+.reqText { font-size: var(--fs-meta); color: var(--text-soft); }
+
+.includeLabel {
+  display: flex;
+  align-items: center;
+  gap: var(--s1);
+  font-size: var(--fs-label);
+  font-weight: 600;
+  color: var(--text-soft);
+  cursor: pointer;
+}
+.includeLabel input { accent-color: var(--violet); width: 14px; height: 14px; }
+
+/* Add row */
+.addRow {
+  width: 100%;
+  padding: var(--s3) var(--s4);
+  border: 1.5px dashed var(--border-strong);
+  border-radius: var(--r-row);
+  background: transparent;
+  font-family: inherit;
+  font-size: var(--fs-meta);
+  color: var(--text-muted);
+  cursor: pointer;
+  text-align: center;
+  transition: border-color 0.1s, color 0.1s;
+}
+.addRow:hover { border-color: var(--violet); color: var(--violet); }
+
+/* Tally */
+.tally {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+  padding: var(--s3) var(--s1);
+  font-size: var(--fs-meta);
+  flex-wrap: wrap;
+}
+.unclear { color: var(--warn-ink); }
+.tallyWarn { font-size: var(--fs-meta); color: var(--bad-ink); }
+
+/* Interpretation panel */
+.interpretCard {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  padding: var(--s4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+}
+.interpretField { display: flex; flex-direction: column; gap: var(--s1); }
+.interpretFieldLabel {
+  font-family: var(--font-mono);
+  font-weight: 500;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-size: var(--fs-micro);
+}
+.interpretText { font-size: var(--fs-body); line-height: var(--lh-body); }
+
+.sunkenSource {
+  background: var(--bg-sunken);
+  border-radius: var(--r-row);
+  padding: var(--s3) var(--s4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+.sourceHeader { display: flex; align-items: center; justify-content: space-between; gap: var(--s2); }
+.openSource {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  font-size: var(--fs-meta);
+  font-weight: 600;
+  color: var(--violet);
+  text-decoration: none;
+  cursor: pointer;
+}
+.openSource:not(:disabled):hover { text-decoration: underline; }
+.openSource:disabled { cursor: default; color: var(--text-soft); }
+.sourceQuote {
+  border-left: 3px solid var(--violet);
+  padding-left: var(--s3);
+  font-size: var(--fs-body);
+  color: var(--text);
+  font-style: italic;
+}
+.sourceNote { font-size: var(--fs-meta); color: var(--text-muted); }
+
+@media (max-width: 900px) {
+  .body { flex-direction: column; }
+  .left { flex: unset; width: 100%; }
+}
+@media (max-width: 640px) {
+  .headerCard, .interpretCard { padding: var(--s3); }
+  .reqRow { padding: var(--s3); }
+  .sunkenSource { padding: var(--s3); }
+}
