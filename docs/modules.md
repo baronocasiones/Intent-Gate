@@ -765,10 +765,20 @@ mount is never downgraded to a write-bit permission.
   The ACL denies the specific inheriting write/delete-child set instead. Reading
   and listing stay available, because a verifier that cannot read is not a
   verifier.
+- **The two platform controls are not the same control, and Linux CI proved it after
+  the first PR was already open.** The first Linux run failed the *modify* case:
+  `chmod 0555` on a directory blocks creating and unlinking its entries but not
+  writing to a file already inside it, which is governed by that file's own mode —
+  where the Windows ACL's `(OI)(CI)` inheritance reaches pre-existing children and
+  never had the hole. **Fixed in the product, not the test:** POSIX provisioning now
+  clears the write bits from the contents as well, and the restore is correspondingly
+  deep. A claim that held on one platform and not the other was a claim about
+  Windows.
 - **One mutation survives the Windows form, and it is recorded rather than
   smoothed over:** unlinking a file that was already in the workspace. Windows
   declines to express readable-and-undeletable from a plain deny ACE (measured,
-  not assumed — denying `DELETE` blocks reads too). `policy.py` and
+  not assumed — denying `DELETE` blocks reads too), and POSIX refuses the same
+  unlink because the write bit is gone from the parent. `policy.py` and
   `sandbox.py` both name it, a Windows-only test pins it so anyone tightening
   the rights sees the gap rather than inheriting it, and the record's
   `no_write_bit` mechanism is what it is worth. The D6 mount is the control

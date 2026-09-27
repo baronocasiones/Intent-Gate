@@ -1140,7 +1140,16 @@ def test_provisioning_refuses_every_write_shape_it_claims_to_refuse(provisioned_
     """Each mutation named in `ensure_readonly_workspace`'s docstring is actually
     refused: creating a file, modifying an existing one, creating a
     subdirectory. Asserting only the first would leave the other two as prose,
-    and prose is exactly what this module exists to stop selling."""
+    and prose is exactly what this module exists to stop selling.
+
+    **The modify case is the one that had to be paid for.** On the first Linux
+    run of this file it failed, and the product was wrong rather than the test:
+    a `0555` directory blocks creating and unlinking its entries but not writing
+    to a file that already exists, because that is governed by the file's own
+    mode. POSIX provisioning now clears the write bits from the contents too,
+    which is what the Windows ACL gets for free from `(OI)(CI)` inheritance.
+    A claim that held on one platform and not the other was a claim about
+    Windows."""
     with pytest.raises(OSError) as created:
         (provisioned_workspace / "new.py").write_text("n", encoding="utf-8")
     assert created.value.errno in REFUSAL_ERRNOS
@@ -1154,6 +1163,62 @@ def test_provisioning_refuses_every_write_shape_it_claims_to_refuse(provisioned_
     assert subdir.value.errno in REFUSAL_ERRNOS
 
     assert (provisioned_workspace / "source.py").read_text(encoding="utf-8") == "x = 1\n"
+
+
+@pytest.mark.skipif(
+    WINDOWS,
+    reason=(
+        "POSIX-only: unlinking a pre-existing file is refused here because the "
+        "write bit is gone from the *directory*, and unlinking is governed by "
+        "the parent. Windows cannot express this - see the ACL residual test "
+        "below, which asserts the opposite. The pair is deliberate: the two "
+        "platform controls are not equivalent, and this is where the difference "
+        "is pinned rather than assumed"
+    ),
+)
+@SKIP_AS_ROOT
+def test_posix_provisioning_also_blocks_unlinking_a_pre_existing_file(tmp_path):
+    """The POSIX control is strictly stronger than the Windows one, and the
+    asymmetry is worth having in a test rather than only in a comment.
+
+    `unlink` needs write permission on the parent directory, and provisioning
+    removed it, so removal is refused. The Windows ACL leaves this one open
+    because a deny ACE cannot grant readable-and-undeletable — which is exactly
+    why the record's `no_write_bit` is a weaker claim on Windows than the same
+    mechanism is on POSIX, and why the D6 mount is still the real answer."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "source.py").write_text("x = 1\n", encoding="utf-8")
+    ensure_readonly_workspace(workspace)
+    try:
+        with pytest.raises(OSError) as unlink:
+            (workspace / "source.py").unlink()
+        assert unlink.value.errno in REFUSAL_ERRNOS
+        assert (workspace / "source.py").exists()
+    finally:
+        restore_workspace_writable(workspace)
+
+
+@SKIP_AS_ROOT
+def test_provisioning_restores_write_on_the_contents_not_just_the_directory(tmp_path):
+    """Restore has to be as deep as provisioning, or it is not a restore.
+
+    A teardown that put the write bit back on the directory alone would leave
+    every file inside it at `0444`, and pytest's cleanup — or an operator's next
+    edit — would hit a wall with nothing in the record to explain it."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    nested = workspace / "nested"
+    nested.mkdir()
+    target = nested / "source.py"
+    target.write_text("x = 1\n", encoding="utf-8")
+    ensure_readonly_workspace(workspace)
+
+    restore_workspace_writable(workspace)
+
+    target.write_text("edited\n", encoding="utf-8")
+    assert target.read_text(encoding="utf-8") == "edited\n"
+    (nested / "added.py").write_text("new\n", encoding="utf-8")
 
 
 @SKIP_AS_ROOT

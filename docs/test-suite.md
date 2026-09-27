@@ -876,6 +876,23 @@ failure** on both legs (the failure re-proven pre-existing on parent
   `policy.py`, pinned by a Windows-only test, and is the concrete reason the record
   says `no_write_bit` instead of a read-only mount. Reading and listing stay available,
   because a verifier that cannot read is not a verifier.
+- **CI caught the claim being true on one platform only, and the product was the wrong
+  side of it.** The first Linux run of this branch failed **2 of the new tests**, both
+  with `DID NOT RAISE` on the **modify** case: `chmod 0555` on a *directory* blocks
+  creating, renaming and unlinking its entries, but writing to a file already there is
+  governed by that file's own mode, so a `0644` file inside a `0555` directory still
+  accepted `open(..., "w")`. Windows never had this hole — the deny ACE carries
+  `(OI)(CI)` and reaches pre-existing children — so the test asserted the Windows
+  behaviour as universal and a "measured" claim was in fact measured on one platform.
+  **The fix is in the product, not the test:** POSIX provisioning now clears the write
+  bits from the directory's *contents* as well (`_deny_write_posix`), and
+  `restore_workspace_writable` is correspondingly deep, because a restore that only
+  fixes the top directory is not a restore. The surviving asymmetry is now pinned in
+  both directions — a POSIX test asserts unlink **is** refused, the Windows test
+  asserts it is **not** — because "these two controls are not equivalent" is a fact
+  worth a test rather than a paragraph. **This is the payoff of flagging the risk:** the
+  unrun POSIX path was named in the PR body before CI ran, and the first thing CI found
+  was exactly there.
 - **Guards: 20 added, and what each is for.** `test_policy.py` 75 → 86 (provisioning:
   makes a writable workspace refuse; leaves the read side working; refuses every write
   shape it claims to; does not touch a workspace that already refuses; names the control

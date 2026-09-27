@@ -200,6 +200,15 @@ mutation survives it, unlinking a file that was already there, because Windows
 will not express readable-and-undeletable from a plain deny ACE. Both are pinned
 by tests. **M10's D6 read-only bind mount is still the control without that
 weakness, and is still absent from the repo.**
+- **The POSIX branch was found wrong by CI, and it was the product that was wrong.**
+  The first Linux run of this branch failed the *modify* case: `chmod 0555` on a
+  directory blocks creating, renaming and unlinking its entries, but writing to a
+  file already inside it is governed by that file's own mode — so a `0644` file in a
+  `0555` directory still accepted `open(..., "w")`. Windows never had this hole
+  because `(OI)(CI)` reaches pre-existing children, which is how a test written on
+  Windows came to assert a universal claim. Provisioning now clears the write bits
+  from the contents too, the restore is deep to match, and the surviving asymmetry
+  (POSIX refuses the unlink, Windows does not) is asserted in both directions.
 
 ## 9. Publishable metric (as coded)
 
