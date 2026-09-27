@@ -1,7 +1,7 @@
 """Typed in-process mirrors of contracts/*.schema.json — one model per contract.
 
 Two tiers, deliberately:
-  * contracts/ is the PERMISSIVE interchange layer. None of the five draft-07
+  * contracts/ is the PERMISSIVE interchange layer. None of the six draft-07
     schemas sets `additionalProperties: false`, so extra keys are tolerated by
     omission. That is what lets a fixture or a payload carry more than the
     contract needs.
@@ -37,6 +37,7 @@ from typing import Literal
 
 Verdict = Literal["CERTIFIED", "CONDITIONAL", "REJECTED", "PENDING"]
 EvidenceTier = Literal["E0", "E1", "E2", "E3", "E4", "E5", "E6"]
+Probe = Literal["CODE_SEARCH", "LOGIC_TRACE", "STATE_CHECK", "ERROR_PATH", "ABSENCE_CHECK"]
 
 
 class ContractModel(BaseModel):
@@ -57,6 +58,40 @@ class Criterion(ContractModel):
     criterion_id: str
     text: str
     testable: bool
+
+
+class Finding(ContractModel):
+    """contracts/findings.schema.json — one probe result against one criterion (M7).
+
+    No defaults, for the same reason `Criterion` has none: all five keys are in
+    the contract's `required`, and a probe that silently defaulted its `note` or
+    `location` to `""` would attest that something was examined when it was not.
+
+    Two properties of the contract are load-bearing and are carried across
+    deliberately rather than "cleaned up":
+
+    * **`result` is unenumerated.** Its vocabulary belongs to M7, not to M1, so
+      it stays `str` here. The moment M7 ratifies one, M3 changes in the same
+      commit (AC 3).
+    * **`evidence_tier` is ABSENT, on purpose.** The contract expects a tier
+      alongside it, and the E0-E6 ladder is still undefined in the source — it
+      is decision **D1**, unratified. The contract says in its own `description`
+      not to add it, so it is not added here, and the model enforces no tier
+      constraint. Adding a field now would invent a contract M1 has not written.
+
+    `probe` reuses the contract's five-value enum as a `Literal`, so an unknown
+    probe name is a loud `ValidationError` rather than a finding attributed to a
+    probe nobody ran. The enum is pinned to the contract by
+    `test_schemas_contracts.py::FIVE_PROBES`; note that this is the same alias->
+    field wiring that `architecture.md` 11.12 records as unguarded for
+    `Verdict` / `EvidenceTier` — `Probe` inherits that gap rather than closing it.
+    """
+
+    criterion_id: str
+    probe: Probe
+    result: str
+    location: str
+    note: str
 
 
 class CriterionVerdict(ContractModel):
