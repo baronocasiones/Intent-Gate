@@ -18,10 +18,12 @@ first. Real: M4 ingest, M5 extract, M8 adjudicate (E0–E6 ladder), M9 emit (der
 M12 attestor (10-key record, both refusal paths), M14 persistence, M15 serving,
 M18 CLI **and the MCP server** (`.bob/` config + `scripts/mcp_attest_server.py`).
 Still stub or absent: **M7 real probes** (mock findings only), `/api/metrics`
-(hard-coded), live watsonx.ai, GitHub write-back, and the **dashboard build on this
-branch** (`frontend/package-lock.json` and the §11.19 fixes are present in the
-working tree but **uncommitted**, so they are not part of the branch yet). §11 gaps
-and `docs/test-suite.md` carry the detail. History below.
+(hard-coded), live watsonx.ai, GitHub write-back, and the **React build**
+(`node_modules/` and `dist/` are still absent, so M15's fixed `_dist` mount remains
+unproven against a real build). **§11.19 is closed on the branch** as of `b6724d8` —
+the dashboard resolves a real run id and normalises the verdict case — with the
+`fixtures.js` deletion still staged. §11 gaps and `docs/test-suite.md` carry the
+detail. History below.
 
 Status: **the gate runs end-to-end over HTTP, with real logic in every stage it
 claims** (Session 25, 2026-09-27). Last verified against code: **`ac9e816` —
@@ -449,20 +451,20 @@ wired yet.
 
 19. **The dashboard cannot render a live run, so "never built" understates it** (found
     2026-09-27, Session 25 verification round, read-only — not fixed). **BOTH HALVES NOW
-    FIXED IN THE WORKING TREE BY A PARALLEL SESSION, AND NOT YET COMMITTED — so this gap
-    is closed on the tree and still open on the branch.** Re-measured 2026-09-27 (Session
-    27): `App.jsx` now imports `fetchRunList` and resolves a real id via
+    CLOSED ON THE BRANCH, by the parallel frontend session's `b6724d8` ("M16: connect the
+    dashboard to the live API and close §11.19") — so this gap is CLOSED, re-measured
+    2026-09-27 (Session 27) against `git show HEAD:` rather than the working tree.**
+    `App.jsx` now imports `fetchRunList` and resolves a real id via
     `await fetchRun(runs[0].run_id)` instead of the impossible `fetchRun('demo')`;
-    `frontend/src/fixtures.js` is deleted (so the `PENDING@E0` weak fallback is gone);
     `frontend/package-lock.json` exists, so `npm install` has run; and
     `VerdictBadge.jsx` normalises the incoming string with `.toUpperCase()`, adds the
     `CONDITIONAL` branch it previously lacked, and cites this gap in a comment — so the
     lowercase-`status` orange-everything defect is fixed at the component.
-    **`git show HEAD:frontend/src/components/VerdictBadge.jsx` still carries the broken
-    comparison**, so on the committed branch both defects are still live. An uncommitted
-    fix in a shared tree is not a fix — it becomes one when the owning session commits it.
-    Owner: M16 (the parallel session holding the frontend). The original finding follows,
-    as written on the day.
+    **One third of the finding is still open:** the deletion of `frontend/src/fixtures.js`
+    — the `PENDING@E0`/`'stub'` weak fallback that was the *other* half of this gap — is
+    **staged but not committed**, so the file is still on the branch while the tree lacks
+    it. `git show HEAD:frontend/src/fixtures.js` still resolves. That half closes when
+    the owning session commits it. The original finding follows, as written on the day.
     defects that survive a successful build:
     - `App.jsx` calls `fetchRun('demo')` — a **hard-coded run id that cannot exist**. The
       detail route 404s an unknown id, so `fetchRun` returns `null`, `setLive(false)` never
@@ -1474,7 +1476,7 @@ was correct throughout; the drift was entirely in prose. All ten are now correct
 - **The finding that produced the only code change:** a guard that **hung instead of failing** — see §M10's note in `modules.md` and the Session 27 entry above. A test whose only exits are "pass" and "hang" is not a guard; in CI it consumes the job budget and names nothing.
 - **Docs corrected in place, originals preserved — three instances, all in records written hours apart by different sessions.** (1) `refactor-plan.md` §5 and this file's own Session 25 entry both said M7's `mode: "mock"` is labelled "in the artifact"; it is in M7's **stage dict** and is dropped by M8. (2) The incoming M12 lane recorded the `assert_read_only` worker-startup wiring as open; it is closed at `orchestrator/jobs.py:39`. (3) `test-suite.md`'s status header advertised a **"1 failed"** that does not exist on this tree — inherited from `main` and closed by the M4 merge. *This file's own claim about itself is still a claim; verify it from source.*
 - **Still not real, named here so the demo does not claim it:** **M7's real probes** — the ladder is adjudicated from a hardcoded §1.7 finding list, and **§11.18** stands: `mode`, `tokens_spent` and `findings` are dropped by M8, so the artefact says nothing about how a finding was reached. **§11.7** stands: there is no demo repo, so M4 honestly records `unreached: ENOENT` and the demo's locations point into a file that does not exist. **§11.18's sibling**: M9's `emit.py` holds **zero** references to `attestor_policy`, so M12's 10-key, fail-closed record — the read-only *proof* — never reaches the artefact even though the read-only *gate* now runs in the worker path. `/api/metrics` is still a hard-coded stub by decision D-a. `attestor_policy` is the single cheapest item on the honesty list and it is M9's one line.
-- **§11.19 re-measured and split, and this is the one place where "tree" and "branch" differ.** Both halves are fixed **in the working tree** by the parallel frontend session — `fetchRunList()` resolves a real run id, `fixtures.js` is deleted, a lockfile exists, and `VerdictBadge` normalises case and has the `CONDITIONAL` branch it lacked, citing §11.19 in a comment. **`git show HEAD:frontend/src/components/VerdictBadge.jsx` still carries the broken comparison**, so the gap is closed on the tree and open on the branch. Re-verify with `git show HEAD:<file>`, never by reading the working tree.
+- **§11.19 — closed on the branch, and this entry was stale within a minute of being written.** At the time of writing it read "fixed in the working tree, open on the branch"; the parallel session then committed **`b6724d8`** ("M16: connect the dashboard to the live API and close §11.19"), and re-measuring with `git show HEAD:` shows both substantive halves are on the branch — `fetchRunList()` resolves a real run id, and `VerdictBadge` normalises case with the `CONDITIONAL` branch it lacked. **The third piece, deleting the `PENDING@E0` weak fallback `frontend/src/fixtures.js`, is still staged and uncommitted**, so that half is closed on the tree and open on the branch (`git show HEAD:frontend/src/fixtures.js` still resolves). Corrected in a follow-up commit rather than left to be found wrong later — which is the whole reason a record's tail is re-read immediately before writing.
 - **Honest limits of this session's verification, stated rather than glossed:** `bob` is **not on PATH** on this machine, so Session 26's central claim — that the read-only mode is enforced **by the client**, not merely asserted by our config — cannot be re-proven here; the 16 mutations cover the config side only. The dashboard's `node_modules/` and `dist/` are still absent, so **no React build was exercised** and M15's fixed `_dist` mount remains unproven against a real build. `origin/main` is **6 commits and ~8,800 insertions ahead** and unmerged — 13 files / 35 conflict regions, **9 of them code**, because both sides independently implemented M10, M12 and M15; that merge is a decision, not a mechanical resolution, and it is the next session's work.
 - **New conventions/patterns this session established:**
   1. **A guard must have a failure mode.** If the loop under test has no natural exit, the test supplies a bound. Same family as Session 21's note that a collection `ImportError` is a *stronger* kill than an assertion — applied to the timeout axis.
@@ -1485,4 +1487,4 @@ was correct throughout; the drift was entirely in prose. All ten are now correct
   6. **A duplicate acceptance criterion is invisible to a marker scan.** During conflict resolution the pre-conflict `- [ ]` header sat in the common region while the resolution re-declared the same AC: markers hit zero and the section was still wrong. Conflicts in a structured list corrupt *structure*, not just text — re-read the assembled region against its neighbours.
   7. **Resolve a conflict against the source, not against the incoming commit message.** Both sides asserted the same gap was open; one `grep` of `jobs.py` settled it, and the side that was "right" was neither — the wiring lived in a file neither side named.
   8. **Commit with `--only` and explicit paths when the tree is shared.** The neighbour's already-staged deletion of `frontend/src/fixtures.js` was left staged for its own commit, which is the only way two sessions can share one index without either losing work.
-- **Open at archive:** §11.18 and §11.19 open on the branch · no demo repo (§11.7) — the cheapest single move to a defensible demo · M9's one `attestor_policy` line · M18's runbook still owed and still gating Phases 4–5, with `MOCK_LLM=true` measured **inert** so the runbook must not imply it is load-bearing · CI's validator step still lacks `if: always()` (inert while green) · **`origin/main` 6 commits / ~8,800 insertions ahead, unmerged, 35 conflict regions of which 9 are code** · `refactor` **unpushed** — no network to origin from this machine, so CI is unobserved and the remote tip unverifiable · `bob` not on PATH, so the client-enforcement claim is unproven here.
+- **Open at archive:** §11.19 **closed** on the branch at `b6724d8` except its `fixtures.js` deletion, still staged · §11.18 open on the branch · no demo repo (§11.7) — the cheapest single move to a defensible demo · M9's one `attestor_policy` line · M18's runbook still owed and still gating Phases 4–5, with `MOCK_LLM=true` measured **inert** so the runbook must not imply it is load-bearing · CI's validator step still lacks `if: always()` (inert while green) · **`origin/main` 6 commits / ~8,800 insertions ahead, unmerged, 35 conflict regions of which 9 are code** · `refactor` **unpushed** — no network to origin from this machine, so CI is unobserved and the remote tip unverifiable · `bob` not on PATH, so the client-enforcement claim is unproven here.
