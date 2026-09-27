@@ -52,7 +52,10 @@ Three environment hazards, handled by fixtures rather than by luck:
 
 The ELOOP case needs a symlink, which Windows grants only with the symlink
 privilege; that test skips when the privilege is missing, with the reason
-stated.
+stated. Three tests that pin the *real* mount reading need `os.statvfs`, which
+Windows does not have; they skip with the reason stated there as well — the
+product's `undetermined` answer is correct, it just is not what those three
+assert.
 
 
 `llm_egress` is the fifth grant. Option (b) puts the watsonx.ai call in each M7b
@@ -113,6 +116,21 @@ SKIP_AS_ROOT = pytest.mark.skipif(
     reason=(
         "running as root: the write bit is advisory, so a 0555 directory still "
         "accepts a write and the read-only probe has nothing honest to observe"
+    ),
+)
+
+# This platform has no `os.statvfs` (Windows), so no real mount reading exists
+# and the `os.ST_RDONLY` constant a fabricated one needs is absent too. The
+# product degrades honestly to `undetermined`; the tests below pin the Linux
+# observation instead, which cannot be produced here. Stated, like the rest.
+SKIP_NO_STATVFS = pytest.mark.skipif(
+    not hasattr(os, "statvfs"),
+    reason=(
+        "os.statvfs is unavailable on this platform: neither a real mount "
+        "reading nor an os.ST_RDONLY to fabricate one with can exist, so the "
+        "Linux observation these tests pin cannot be produced (the product "
+        "answers `undetermined`, which is correct but not what they assert); "
+        "Linux CI runs them"
     ),
 )
 
@@ -584,6 +602,7 @@ def test_a_missing_write_bit_is_named_as_such_and_not_as_a_mount(ro_workspace):
 
 
 @SKIP_AS_ROOT
+@SKIP_NO_STATVFS
 def test_a_writable_workspace_reports_a_writable_mount_too(rw_workspace):
     """The same real reading on the ordinary directory, so the corroboration is
     known to work in both directions rather than only returning False by accident.
@@ -596,6 +615,7 @@ def test_a_writable_workspace_reports_a_writable_mount_too(rw_workspace):
     assert "no ST_RDONLY" in proof.mount_witness
 
 
+@SKIP_NO_STATVFS
 def test_the_write_is_the_authority_and_the_mount_flag_cannot_override_it(
     monkeypatch, rw_workspace
 ):
@@ -748,6 +768,7 @@ def test_enforce_workspace_readonly_returns_the_proof_on_a_read_only_workspace(r
     assert proof.witness in REFUSAL_NAMES
 
 
+@SKIP_NO_STATVFS
 def test_enforce_workspace_readonly_raises_on_a_writable_workspace(rw_workspace):
     """Fails closed. A writable workspace is exactly the state the policy is
     supposed to exclude, so the function that guards worker startup must refuse
