@@ -114,8 +114,11 @@ No auth, no SSE/polling, no GitHub comment/check-run write-back yet (all were ol
 
 ## 6. Persistence
 
-- **Index:** SQLite WAL single file (`./attestation.db` default). Schema is one table (`runs`). WAL mode set on every `get_db()`. No migrations, no callers.
-- **Artifacts:** JSON files under `ARTIFACT_DIR`, each self-describing with a `sha256` of its own sorted body (hash-chained *record* in the weak sense: tamper-evident per file; no cross-file chain yet — that is spec-future).
+- **Index:** SQLite WAL single file. One table (`runs`: `id, status, created_at, artifact_path`) plus `idx_runs_created_at` for newest-first listing. WAL mode set on every `get_db()`. No migrations. The connection default is env-wired: `get_db()` with no path derives from `config.DATABASE_URL` (`_sqlite_path` strips the `sqlite:///` scheme); an explicit path always wins. `config.py` itself is untouched (M11's file).
+- **Writes:** `save_run` / `set_status` hold the `commit()` — the caller cannot forget it — and `set_status` returns the rowcount so a missing run reads as a blocking failure (rule 6). `now_iso()` is the single timestamp source (UTC, tz-aware), which is what makes `created_at` a pinned ISO-8601 `str` (M14 AC 2). Reads: `get_run` (row or `None` — M15's 404) and `list_runs` (newest-first, `id DESC` tiebreak).
+- **Artifacts:** JSON files under `ARTIFACT_DIR`, each self-describing with a `sha256` of its own sorted body (hash-chained *record* in the weak sense: tamper-evident per file; no cross-file chain yet — that is M9/D8). The envelope is written payload-first, store-keys-last, so a payload can never forge `sha256`; `artifact_path_for()` is the single path resolver both writer and reader use. `prev_digest` is a PROPOSED, UNCONTRACTED D8 seam for M9 (D15) — pinned provisional by a self-invalidating test that fails the day M1 contracts the envelope.
+- **Typed reads:** `store/records.py` — `read_artifact` (raw envelope, `None` when absent), `project_run_payload` (whitelist to the four `run.schema.json` keys — discharges `modules.md` §M3 obligation 1), `read_run_record` (strict `RunRecord`; raises on malformed per the `sandbox.py` posture, `None` only for missing). First product caller of M3's mirrors — §11.10 partially discharged for the read path; gates/routers still don't construct models.
+- **Known limitation (accepted, recorded):** `DATABASE_URL`'s `./attestation.db` and `ARTIFACT_DIR`'s `./artifacts` resolve against the process CWD — a server restarted elsewhere silently gets a different store. Same bug class as the §11.6 `_dist` climb. Held as-is by decision; fixing it means a root-resolution convention nothing else follows.
 - **Convention (carried):** envelope + artifact-pointer integration — API returns small records pointing at artifact files, never giant blobs inline.
 
 ## 7. LLM layer + spend discipline
@@ -218,8 +221,19 @@ wired yet.
     evaluation, new in 3.14) means the annotation is never evaluated at `def` time on
     3.14 — proven with a probe script (`/tmp/opencode/pep649_probe.py`: 1 warning on
     3.12, 0 on 3.14 for the identical `def`). The annotation is never introspected, the
-    function behaves identically, and the real runtime access at line 40 still warns on
-    all four legs. Recorded because a count difference gets a source, not a shrug.
+  function behaves identically, and the real runtime access at line 40 still warns on
+  all four legs. Recorded because a count difference gets a source, not a shrug.
+
+15. **The tree is red on arrival from the M2 merge — one failure, not M14's**
+    (found 2026-09-27, Session 22, while verifying M14).
+    `fixtures/demo_traceability.json` now carries `E4`/`E2` (landed via PR #43,
+    M2-fixture) while
+    `test_models_parity.py::test_demo_traceability_fixture_loads_into_model`
+    still expects `E0`. Either the fixture regressed or the assertion is stale;
+    deciding is M2's (fixture) + M3's (test) job — both files sit outside M14's
+    ownership (`modules.md` §0.4), so this session neither fixed nor silenced it
+    (rule 8, Convention 6). M14 verified *around* it: 39/39 M14 tests green on
+    3.11.9 + 3.12.14, validator exit 0 on both. Owners: M2 + M3.
 
 ## 12. Monorepo layout (as on disk)
 
@@ -242,7 +256,7 @@ backend/app/llm/{watsonx_client,mock_client}.py
 backend/app/attestor/policy.py
 backend/app/metrics/false_certified.py
 backend/app/models/schemas.py
-backend/app/store/artifacts.py
+backend/app/store/{artifacts,records}.py
 backend/tests/test_scaffold.py
 contracts/*.schema.json  contracts/examples/*.json
 fixtures/demo_*.json  scripts/validate_contracts.py
@@ -755,3 +769,11 @@ was correct throughout; the drift was entirely in prose. All ten are now correct
 - **Follow-up the same day (user instruction: §11.14 now, §11.12 when unblocked):** the
   pinning decision is **taken** — §11.14 above is marked CLOSED with the evidence. The
   §11.12 guards remain open per the instruction, owner still unassigned.
+
+### 2026-09-27 — Session 22: M14 persistence (db + artifacts) implemented
+- **Implemented:** `backend/app/db.py` rewritten (env-wired `get_db` via `_sqlite_path`, `now_iso`, `idx_runs_created_at`, `save_run`/`set_status` holding the commit, `get_run`/`list_runs`); `store/artifacts.py` extended (`prev_digest` D8 seam, payload-first envelope ordering, `artifact_path_for`); new `store/records.py` (`read_artifact`, `project_run_payload`, `read_run_record` — discharges §M3 obligation 1 and is the first product caller of the mirrors). `config.py` untouched (M11's file); no contract, fixture, endpoint, or dependency changed. **Zero existing test flips.**
+- **D15 verdict (user-confirmed):** the `prev_digest` seam stays, explicitly PROPOSED + UNCONTRACTED, guarded by a self-invalidating test that fails when M1 contracts the envelope (the Session-18 `INLINE_MIRRORS` pattern). CWD relativity accepted + recorded in §6. Malformed artifacts raise per the `sandbox.py` posture; `None` only for missing.
+- **Verified (via subagent — bash denied this session):** 209 passed + 1 pre-existing failure on **3.11.9 and 3.12.14** (clean venvs from `requirements.txt`); validator exit 0 (`OK 6/6`) both legs; all 5 M14 guards mutation-proven lethal (`/tmp/opencode/m14_guard_proof.py`, scratch copies only, all deleted); repo tree unpolluted. The 1 failure is §11.15 (M2 fixture drift from PR #43) — recorded, not fixed, not silenced.
+- **Counts:** suite is 210 (was 118 at Session 21 — `main` moved: M2-fixture PR #43, fix PR #46); M14 contributes 39 (32 in `test_store_db.py`, 7 in `test_store_records.py`). §6 rewritten as-built; §12 store line updated; §11.15 added.
+- **Flagged, not fixed (not M14's files):** `modules.md` §M12 + its §0.2 path row still omit `attestor/sandbox.py` and still say "enforced in tests only" — the 10th doc-vs-code instance; M12's owner to reconcile. Branch is `m14-persistence` @ `4b03c55` (= `main`); commit pending user go.
+- **Open at archive:** AC 1's remainder (M10 writes, M15 reads — the seam is provided); §11.15 (owners M2+M3); everything from Session 21 still open (M11, M12, D1–D13 sans the D15 seam, ownership unassigned).
