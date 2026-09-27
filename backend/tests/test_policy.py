@@ -17,6 +17,23 @@ every "refused" case uses a real directory with the write bit removed and the
 write genuinely attempted. There is no mocking of `os.access` anywhere in this
 file, on purpose. The whole value of the probe is that the kernel refused.
 
+Five OS interactions are substituted in this file, and each test's name says which:
+
+  * `Path.write_text` -> EROFS, **once**, in
+    `test_refusal_witness_is_the_errno_the_kernel_gave`. A real read-only mount
+    needs root, so this box can only provoke EACCES.
+  * `os.statvfs` -> a fabricated `f_flag`, **four times** (three claiming
+    ST_RDONLY, one raising). Same root problem, plus `tmp_path` is never on a
+    read-only mount — the positive mount reading is simply not reachable here.
+  * `os.ST_RDONLY` deleted, **once**, to prove the platform-without-the-constant
+    path degrades to `undetermined` instead of raising or guessing.
+
+Everything else runs against the real filesystem. That includes the fail-open
+direction, which is the one that matters most: a genuinely writable directory is
+read for real, its write is genuinely refused by a real 0555 mode, and the mount
+flag is genuinely read from the kernel in both cases. No mock is involved in any
+assertion about a real workspace.
+
 Three environment hazards, handled by fixtures rather than by luck:
   * A 0555 directory defeats pytest's tmp_path cleanup, which uses
     shutil.rmtree and cannot unlink inside a directory it may not write to. Any
@@ -33,11 +50,10 @@ Three environment hazards, handled by fixtures rather than by luck:
     refuses for real: the write is genuinely attempted every time, and Linux CI
     runs every refusal case.
 
-Exactly one test substitutes the OS call, and its name says so. It covers the
-errno-to-witness translation for EROFS, which cannot be provoked on an
-unprivileged box; every refused case attempts the write for real. The ELOOP case
-needs a symlink, which Windows grants only with the symlink privilege; that test
-skips when the privilege is missing, again with the reason stated.
+The ELOOP case needs a symlink, which Windows grants only with the symlink
+privilege; that test skips when the privilege is missing, with the reason
+stated.
+
 
 `llm_egress` is the fifth grant. Option (b) puts the watsonx.ai call in each M7b
 worker, so a worker needs outbound network. The tests below declare the complete
@@ -67,6 +83,10 @@ from app.attestor.policy import (
     resolve_worker_caps,
 )
 from app.attestor.sandbox import (
+    MECHANISM_MOUNT,
+    MECHANISM_NO_WRITE_BIT,
+    MECHANISM_UNDETERMINED,
+    MECHANISM_WRITABLE,
     PROBE_NAME,
     REFUSAL_ERRNOS,
     UNDETERMINED_ERRNOS,
@@ -463,7 +483,12 @@ def test_probe_on_a_file_rather_than_a_directory_is_a_visible_failure(rw_workspa
 def test_probe_does_not_raise_for_an_ordinary_refusal(ro_workspace):
     """A refusal is a successful answer to the question, so it comes back as
     data. Raising here would make 'the workspace is read-only' indistinguishable
-    from 'the probe is broken'."""
+    from 'the probe is broken'.
+
+    CHANGED THIS SESSION: the exact-dict assertion below gained `mechanism`,
+    `mount_readonly` and `mount_witness`. The old four-key shape no longer
+    describes what a proof carries, and a shape test that only checks the old keys
+    is how a record quietly stops being evidence."""
     proof = probe_workspace_readonly(ro_workspace)
     assert isinstance(proof, WriteProof)
     assert proof.to_dict() == {
@@ -471,7 +496,12 @@ def test_probe_does_not_raise_for_an_ordinary_refusal(ro_workspace):
         "writable": False,
         "witness": proof.witness,
         "undetermined": False,
+        "mechanism": MECHANISM_NO_WRITE_BIT,
+        "mount_readonly": False,
+        "mount_witness": proof.mount_witness,
     }
+    # and the corroboration is a real reading, not a placeholder
+    assert proof.mount_witness and "ST_RDONLY" in proof.mount_witness
 
 
 def test_write_proof_is_frozen_and_json_ready(rw_workspace):
@@ -497,14 +527,17 @@ def test_refusal_errnos_cover_both_read_only_mechanisms():
 
 def test_refusal_witness_is_the_errno_the_kernel_gave(monkeypatch, rw_workspace):
     """The witness is the kernel's own name for the refusal, not a constant we
-    typed. This is the only test in the file that substitutes the OS call, and it
-    is here for one reason: a real EROFS needs a read-only mount, which needs root,
-    so this box can only provoke EACCES. Every other refused case above attempts
-    the write for real.
+    typed. This substitutes the OS call for one reason: a real EROFS needs a
+    read-only mount, which needs root, so this box can only provoke EACCES. Every
+    other refused case above attempts the write for real.
 
     Without it, hardcoding the witness to "EACCES" passes the whole suite and then
     mislabels the read-only mount M10 actually deploys — which is the one thing an
-    auditor reads this field for."""
+    auditor reads this field for.
+
+    CHANGED THIS SESSION: it is no longer the only substitution in this file (see
+    the module docstring), and it now also pins the mechanism, because EROFS and
+    EACCES stopped being the same finding."""
     def refuse(self, *args, **kwargs):
         raise OSError(errno.EROFS, "Read-only file system")
 
@@ -513,6 +546,167 @@ def test_refusal_witness_is_the_errno_the_kernel_gave(monkeypatch, rw_workspace)
     assert proof.writable is False
     assert proof.undetermined is False
     assert proof.witness == "EROFS"
+    assert proof.mechanism == MECHANISM_MOUNT
+
+
+# --- which control answered: a refused write is two findings, not one ---
+
+
+def test_mechanism_names_are_distinct_and_none_of_them_blurs_the_weak_one():
+    """The strings that reach the run record. A missing write bit is a permission
+    on one inode, reversible by whoever owns the directory; a read-only mount is
+    the D6 boundary, a process inside the workspace cannot lift it. Calling the
+    first one `read_only` — or anything containing that phrase — would hand an
+    auditor the stronger control's name on the weaker control's evidence, which is
+    the one substitution this module exists to refuse. Pinned as a string rule
+    because no behavioural test can tell you a label reads well."""
+    assert MECHANISM_MOUNT == "read_only_mount"
+    assert MECHANISM_NO_WRITE_BIT == "no_write_bit"
+    assert MECHANISM_WRITABLE == "writable"
+    assert MECHANISM_UNDETERMINED == "undetermined"
+    assert "read_only" not in MECHANISM_NO_WRITE_BIT
+    assert "mount" not in MECHANISM_NO_WRITE_BIT
+    assert len({MECHANISM_MOUNT, MECHANISM_NO_WRITE_BIT, MECHANISM_WRITABLE, MECHANISM_UNDETERMINED}) == 4
+
+
+@SKIP_AS_ROOT
+def test_a_missing_write_bit_is_named_as_such_and_not_as_a_mount(ro_workspace):
+    """The load-bearing new finding. A 0555 directory gives EACCES, and the record
+    now says `no_write_bit` — while independently reporting that the mount holding
+    it has no ST_RDONLY. So the auditor learns both halves: the write was refused,
+    and the refusal is a permission rather than a mount. No substitution here; the
+    write is genuinely attempted and the mount flag is genuinely read."""
+    proof = probe_workspace_readonly(ro_workspace)
+    assert proof.writable is False
+    assert proof.mechanism == MECHANISM_NO_WRITE_BIT
+    assert proof.mount_readonly is False
+    assert "no ST_RDONLY" in proof.mount_witness
+
+
+@SKIP_AS_ROOT
+def test_a_writable_workspace_reports_a_writable_mount_too(rw_workspace):
+    """The same real reading on the ordinary directory, so the corroboration is
+    known to work in both directions rather than only returning False by accident.
+    This is also the fail-open guard: a real writable workspace must never come
+    back with mount_readonly True, which would be a claim nobody can act on."""
+    proof = probe_workspace_readonly(rw_workspace)
+    assert proof.writable is True
+    assert proof.mechanism == MECHANISM_WRITABLE
+    assert proof.mount_readonly is False
+    assert "no ST_RDONLY" in proof.mount_witness
+
+
+def test_the_write_is_the_authority_and_the_mount_flag_cannot_override_it(
+    monkeypatch, rw_workspace
+):
+    """The precedence invariant, tested where it would be violated.
+
+    Here the forbidden write genuinely lands on a genuinely writable directory,
+    and the mount is made to claim ST_RDONLY. A module that let the flag win would
+    report `writable: False` here and let a worker start on a directory that just
+    accepted a write — the fail-open inversion of everything this module claims.
+    The finding must follow the write.
+
+    The statvfs substitution is named as one: `tmp_path` is never on a read-only
+    mount, and manufacturing one needs root."""
+    class _ReadOnlyMount:
+        f_flag = os.ST_RDONLY
+
+    monkeypatch.setattr(os, "statvfs", lambda path: _ReadOnlyMount())
+    proof = probe_workspace_readonly(rw_workspace)
+    assert proof.writable is True, "the mount flag overrode a write that landed"
+    assert proof.mechanism == MECHANISM_WRITABLE
+    # the flag is still reported, honestly, as what it claimed
+    assert proof.mount_readonly is True
+
+
+@SKIP_AS_ROOT
+def test_an_unaskable_mount_is_undetermined_and_does_not_fail_the_refused_write(
+    monkeypatch, ro_workspace
+):
+    """Corroboration never gates. A platform that cannot answer leaves the record
+    less informed, not the worker unstarted: the refused write is the control, and
+    it stands alone. If this raised, the module would refuse to start wherever
+    `statvfs` is unavailable — including any platform we have not thought about —
+    and the refusal would say nothing about whether the control held."""
+    def refuse_statvfs(path):
+        raise OSError(errno.EPERM, "Operation not permitted")
+
+    monkeypatch.setattr(os, "statvfs", refuse_statvfs)
+    proof = probe_workspace_readonly(ro_workspace)
+    assert proof.writable is False
+    assert proof.witness in REFUSAL_NAMES
+    assert proof.mount_readonly is None
+    assert proof.mount_witness.startswith("undetermined")
+    # the gate still returns the proof rather than raising
+    assert enforce_workspace_readonly(ro_workspace).writable is False
+
+
+@SKIP_AS_ROOT
+def test_a_platform_without_st_read_only_records_undetermined_never_false(
+    monkeypatch, ro_workspace
+):
+    """The absent constant is the trap. Reading `os.ST_RDONLY` unguarded raises
+    AttributeError out of the worker gate; rounding the absence down to False
+    would instead assert a fact about a mount nobody asked. Undetermined is the
+    only honest answer, and `is None` is asserted rather than `not ...` so the
+    test cannot be satisfied by the falsy value."""
+    monkeypatch.delattr(os, "ST_RDONLY", raising=False)
+    proof = probe_workspace_readonly(ro_workspace)
+    assert proof.writable is False, "the refusal must not depend on the flag"
+    assert proof.mount_readonly is None
+    assert "ST_RDONLY" in proof.mount_witness
+
+
+@SKIP_AS_ROOT
+def test_a_read_only_mount_is_reported_as_one_when_the_kernel_says_so(
+    monkeypatch, ro_workspace
+):
+    """The positive case for the corroboration. `os.statvfs` is substituted because a
+    real read-only mount needs root; the write itself is **not** substituted — it is
+    genuinely attempted on a 0555 directory and genuinely refused, which is why
+    `mechanism` stays `no_write_bit` while the mount says otherwise. That pairing is
+    synthetic and is not meant to look like a deployment: a real read-only mount
+    returns EROFS and this test would then be asserting the same two fields from a
+    real reading, which is `test_refusal_witness_is_the_errno_the_kernel_gave`'s job.
+
+    What is being proven is narrow and worth having: the mount answer is reported
+    from the mount, and reported True, rather than being inferred from the errno."""
+    class _ReadOnlyMount:
+        f_flag = os.ST_RDONLY
+
+    monkeypatch.setattr(os, "statvfs", lambda path: _ReadOnlyMount())
+    proof = probe_workspace_readonly(ro_workspace)
+    assert proof.writable is False
+    assert proof.mechanism == MECHANISM_NO_WRITE_BIT
+    assert proof.mount_readonly is True
+    assert "ST_RDONLY on the mount" in proof.mount_witness
+
+
+@SKIP_AS_ROOT
+def test_the_two_deployments_are_told_apart_by_the_mount_reading(
+    monkeypatch, ro_workspace
+):
+    """A 0555 directory on a writable mount, and a 0555 directory on a read-only
+    one, are different deployments and must not produce the same fragment.
+
+    The mechanism field is identical in both — correctly, the write was refused the
+    same way in each — so the mount reading is the only thing that tells them
+    apart. That is the whole argument for carrying it, and a test asserting on
+    `mechanism` alone would pass both deployments without noticing they are not
+    the same claim."""
+    permissive = probe_workspace_readonly(ro_workspace)
+
+    class _ReadOnlyMount:
+        f_flag = os.ST_RDONLY
+
+    monkeypatch.setattr(os, "statvfs", lambda path: _ReadOnlyMount())
+    mounted = probe_workspace_readonly(ro_workspace)
+
+    assert permissive.mechanism == mounted.mechanism == MECHANISM_NO_WRITE_BIT
+    assert permissive.mount_readonly is False
+    assert mounted.mount_readonly is True
+    assert permissive.mount_witness != mounted.mount_witness
 
 
 def test_probe_propagates_an_unrecognised_errno_instead_of_inventing_a_witness(rw_workspace):
@@ -557,9 +751,18 @@ def test_enforce_workspace_readonly_returns_the_proof_on_a_read_only_workspace(r
 def test_enforce_workspace_readonly_raises_on_a_writable_workspace(rw_workspace):
     """Fails closed. A writable workspace is exactly the state the policy is
     supposed to exclude, so the function that guards worker startup must refuse
-    rather than return."""
-    with pytest.raises(PermissionError, match="writable"):
+    rather than return.
+
+    CHANGED THIS SESSION: the message now carries the mount's own answer as well
+    as the errno. The operator's next move depends on which mechanism is missing —
+    a workspace that is merely chmodded will keep accepting writes the moment that
+    bit is restored, and the message should not leave them guessing between a
+    chmod and a bind mount."""
+    with pytest.raises(PermissionError) as caught:
         enforce_workspace_readonly(rw_workspace)
+    message = str(caught.value)
+    assert "accepted a write" in message
+    assert "no ST_RDONLY" in message
 
 
 def test_enforce_workspace_readonly_raises_on_an_unprobeable_path(tmp_path):
@@ -685,6 +888,67 @@ def test_ungated_record_reports_the_workspace_as_not_readonly():
     assert "not probed" in ungated.workspace_witness
 
 
+def test_ungated_record_names_no_workspace_rather_than_an_empty_one():
+    """A run that never gated has no directory to name, and the field says so in
+    words. `""` would be the wrong answer twice over: it reads as a path, and it is
+    exactly the 'unmeasured must not look like zero' failure in a string field.
+    The mount answer is null for the same reason — there was no mount to ask
+    about, and false would be a claim about one."""
+    ungated = policy_record(frozenset(), enforcement_applied=False)
+    assert ungated.workspace_path == NOT_PROBED_WITNESS
+    assert ungated.workspace_path != ""
+    assert ungated.workspace_mechanism == MECHANISM_UNDETERMINED
+    assert ungated.workspace_mount_readonly is None
+    assert ungated.workspace_mount_readonly is not False
+    assert ungated.workspace_mount_witness == NOT_PROBED_WITNESS
+
+
+def test_ungated_record_cannot_advertise_a_denied_capability():
+    """The hole this session closed. The ungated branch returned without ever
+    consulting DENIES, so it would mint a record whose `capabilities` is ["edit"]
+    while its own `denied` says ["edit", "execute"] — the module whose purpose is
+    that those cannot both be true, producing both. A gated record already refused
+    this; the not-probed marker was the way around it.
+
+    The message has to distinguish this defect from the gated path's: a run that
+    never gated has no policy to violate, so this is an incoherent record rather
+    than a leak, and an operator reading the error should not have to work out
+    which check fired."""
+    for denied in ("edit", "execute"):
+        with pytest.raises(PermissionError, match="never gated"):
+            policy_record(GRANTS | {denied}, enforcement_applied=False)
+        with pytest.raises(PermissionError, match=denied):
+            policy_record(GRANTS | {denied}, enforcement_applied=False)
+
+
+def test_the_ungated_leak_check_is_not_a_completeness_check():
+    """The boundary of the fix, and the reason the new check is deliberately
+    narrow. An ungated record describes a stage that never gated, so a partial
+    capability set is a legitimate thing to report — requiring all five grants
+    here would make the not-probed marker unusable and push callers toward
+    inventing a full set they never had. So partial passes, leaked fails, and the
+    two must not be conflated into one 'fail closed' rule."""
+    partial = policy_record(frozenset({"read"}), enforcement_applied=False)
+    assert partial.capabilities == ("read",)
+    assert partial.enforcement_applied is False
+    with pytest.raises(PermissionError, match="never gated"):
+        policy_record(frozenset({"read", "edit"}), enforcement_applied=False)
+
+
+@SKIP_AS_ROOT
+def test_record_names_the_workspace_it_was_actually_proven_on(ro_workspace):
+    """The fragment has to be evidence about something. Before this session the
+    record carried a bare errno string, so a run record could say 'a workspace was
+    refused' without ever saying which one — which is true of every workspace on
+    the machine. The path is a function of the probe, so an implementation that
+    built the record from a constant or from GRANTS fails this."""
+    record = enforce_worker_read_only(DECLARED, ro_workspace)
+    assert record.workspace_path == str(ro_workspace)
+    assert record.workspace_path == str(probe_workspace_readonly(ro_workspace).path)
+    assert record.workspace_mechanism == MECHANISM_NO_WRITE_BIT
+    assert record.workspace_mount_readonly is False
+
+
 def test_policy_record_rejects_a_proof_on_an_ungated_record(ro_mode_workspace):
     """A run that never gated reporting workspace_readonly=True would be
     incoherent: the only path to that value is a gated run. Raising beats
@@ -697,22 +961,39 @@ def test_policy_record_rejects_a_proof_on_an_ungated_record(ro_mode_workspace):
 
 @SKIP_AS_ROOT
 def test_enforced_record_shape_is_json_ready(ro_workspace):
-    """Exact fragment M9 places under record["attestor_policy"]."""
+    """Exact fragment M9 places under record["attestor_policy"].
+
+    CHANGED THIS SESSION: four keys added — the workspace that was probed, the
+    mechanism that refused, the mount's own answer, and that answer's witness.
+    The point of the added keys is that an auditor can no longer read this
+    fragment without learning which control actually held."""
     witness = probe_workspace_readonly(ro_workspace).witness
-    assert enforce_worker_read_only(DECLARED, ro_workspace).to_dict() == {
+    enforced = enforce_worker_read_only(DECLARED, ro_workspace)
+    assert enforced.to_dict() == {
         "capabilities": ["llm_egress", "read", "skill", "subagent", "workflow"],
         "granted": ["llm_egress", "read", "skill", "subagent", "workflow"],
         "denied": ["edit", "execute"],
         "enforcement_applied": True,
         "workspace_readonly": True,
         "workspace_witness": witness,
+        "workspace_path": str(ro_workspace),
+        "workspace_mechanism": MECHANISM_NO_WRITE_BIT,
+        "workspace_mount_readonly": False,
+        "workspace_mount_witness": enforced.workspace_mount_witness,
     }
+    # the fragment is self-describing: the corroboration is explained, not just present
+    assert "ST_RDONLY" in enforced.workspace_mount_witness
 
 
 def test_ungated_record_shape_is_json_ready():
-    """The other shape M9 can emit, for a stage that never gated. Both keys are
+    """The other shape M9 can emit, for a stage that never gated. Every key is
     present so an auditor reading the record never has to guess whether a missing
-    field meant 'no' or 'not checked'."""
+    field meant 'no' or 'not checked'.
+
+    CHANGED THIS SESSION: the three new workspace keys appear here too, and none
+    of them is empty or zero. The path carries the not-probed sentence rather than
+    "", and the mount answer is null rather than false — a run that never probed
+    has no mount to describe, and null says that where False would be a claim."""
     assert policy_record(GRANTS, enforcement_applied=False).to_dict() == {
         "capabilities": ["llm_egress", "read", "skill", "subagent", "workflow"],
         "granted": ["llm_egress", "read", "skill", "subagent", "workflow"],
@@ -720,6 +1001,10 @@ def test_ungated_record_shape_is_json_ready():
         "enforcement_applied": False,
         "workspace_readonly": False,
         "workspace_witness": NOT_PROBED_WITNESS,
+        "workspace_path": NOT_PROBED_WITNESS,
+        "workspace_mechanism": MECHANISM_UNDETERMINED,
+        "workspace_mount_readonly": None,
+        "workspace_mount_witness": NOT_PROBED_WITNESS,
     }
 
 
