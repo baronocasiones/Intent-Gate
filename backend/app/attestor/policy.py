@@ -27,7 +27,21 @@ as a fallback and a workspace is never assumed read-only. Widening either is a
 deliberate edit to the constants below, never a side effect of a more forgiving
 parser. `llm_egress` landed exactly that way: option (b) means each M7b worker
 calls watsonx.ai itself, so a worker needs egress, so the token was added here
-with tests pinning it. DENIES did not move.
+with tests pinning it. DENIES did not move. Note that no code exercises that
+grant yet — there is no worker pool, and MOCK_LLM is read nowhere in backend/app
+(architecture.md §11.9) — so it is declared ahead of the thing that needs it, and
+the docs say so rather than implying a capability that is enforced.
+
+A third guarantee sits behind both halves. A refused write is two different
+findings and the record says which: a read-only mount is the D6 mechanism, and a
+missing write bit is a weaker, separately-owned permission on one inode. Both
+refuse a worker; only one is the boundary D6 asks for, so `workspace_mechanism`
+never words the weaker one as read-only. The mount's own ST_RDONLY answer travels
+beside it as `workspace_mount_readonly`, three-valued, with null meaning "we
+could not ask" and never false. The write is the authority throughout — the flag
+is read after it and cannot override it. And the ungated record path refuses a
+denied capability exactly as the gated one does, so no record this module can
+mint both claims `edit` and denies it.
 
 Both downstream wirings are one line each. A worker launched without all five
 tokens, or without a workspace it can prove read-only, now refuses to start, so
@@ -41,7 +55,11 @@ copy both rather than trimming either:
 import os
 from dataclasses import dataclass
 
-from .sandbox import WriteProof, enforce_workspace_readonly
+from .sandbox import (
+    MECHANISM_UNDETERMINED,
+    WriteProof,
+    enforce_workspace_readonly,
+)
 
 # GRANTS is the union of two different kinds of thing, and the split is
 # structural rather than a comment, so a future edit has to decide which layer it
@@ -89,6 +107,21 @@ ATTESTOR_CAPS_ENV = "ATTESTOR_CAPS"
 NOT_PROBED_WITNESS = "not probed: this run never gated"
 
 
+def _refuse_leaked(granted: frozenset, context: str) -> None:
+    """The one place a denied capability is caught, on both record paths.
+
+    `context` names which defect the caller found, because the ungated path's
+    defect is not the gated one's: a run that never gated has no policy to
+    violate, so a denied name in its capabilities is an incoherent record rather
+    than a leak. Both raise and neither repairs — dropping the name instead would
+    mint a record that reads as policy-compliant when nothing was ever checked,
+    which is the one repair this module must never make.
+    """
+    leaked = set(granted) & set(DENIES)
+    if leaked:
+        raise PermissionError(f"attestor policy violation — {context}: {sorted(leaked)}")
+
+
 @dataclass(frozen=True)
 class PolicyRecord:
     """Auditor fragment: the capabilities the run actually had, the sets that
@@ -96,7 +129,19 @@ class PolicyRecord:
     the workspace was read-only when it did. The last two are why this is more
     than a restatement of GRANTS — `workspace_witness` is the kernel's answer,
     carried verbatim so a reader does not have to take our word for it. Immutable
-    and clock-free, so emitted records stay reproducible. to_dict() is JSON-ready."""
+    and clock-free, so emitted records stay reproducible. to_dict() is JSON-ready.
+
+    Three of these keys exist because a refused write is two different findings and
+    a record that cannot tell them apart sells the claim. `workspace_path` names the
+    directory that was actually probed, so the record is evidence about something
+    rather than a reassurance; `workspace_mechanism` says which control answered
+    (a read-only mount, or the weaker missing write bit); `workspace_mount_readonly`
+    is the mount's independent answer and is deliberately three-valued, with None
+    meaning "we could not ask" and never False. Note the cost: the fragment is no
+    longer environment-free, so the same run on two machines produces different
+    bytes here. That is accepted — the artefact is hashed, not this fragment — and
+    the clock is still absent, so repeated runs against one workspace agree.
+    """
 
     capabilities: tuple[str, ...]
     granted: tuple[str, ...]
@@ -104,6 +149,10 @@ class PolicyRecord:
     enforcement_applied: bool
     workspace_readonly: bool
     workspace_witness: str
+    workspace_path: str
+    workspace_mechanism: str
+    workspace_mount_readonly: bool | None
+    workspace_mount_witness: str
 
     def to_dict(self) -> dict:
         return {
@@ -113,13 +162,15 @@ class PolicyRecord:
             "enforcement_applied": self.enforcement_applied,
             "workspace_readonly": self.workspace_readonly,
             "workspace_witness": self.workspace_witness,
+            "workspace_path": self.workspace_path,
+            "workspace_mechanism": self.workspace_mechanism,
+            "workspace_mount_readonly": self.workspace_mount_readonly,
+            "workspace_mount_witness": self.workspace_mount_witness,
         }
 
 
 def assert_read_only(granted: frozenset) -> None:
-    leaked = set(granted) & set(DENIES)
-    if leaked:
-        raise PermissionError(f"attestor policy violation — denied caps granted: {sorted(leaked)}")
+    _refuse_leaked(granted, "denied caps granted")
     missing = set(GRANTS) - set(granted)
     if missing:
         raise PermissionError(f"attestor policy incomplete — missing: {sorted(missing)}")
@@ -177,8 +228,19 @@ def policy_record(
     (the only path to workspace_readonly=True is a gated run) and raises rather
     than quietly dropping the evidence.
 
+    That ungated branch is also where a denied capability used to slip through.
+    It returned without consulting DENIES at all, so `capabilities` could be
+    ["edit"] in a record whose own `denied` says ["edit", "execute"] — a
+    self-contradicting object, minted by the module whose purpose is that those
+    two cannot both be true. The leak check now runs on this path too, with its
+    own context string. It is deliberately NOT extended to the completeness check:
+    an ungated record legitimately describes a stage that never gated, so
+    {"read"} is a valid thing to report and requiring all five grants here would
+    make the not-probed marker unusable.
+
     Real runs take their record from enforce_worker_read_only."""
     if not enforcement_applied:
+        _refuse_leaked(caps, "denied caps granted on a record for a run that never gated")
         if proof is not None:
             raise PermissionError(
                 "attestor policy incoherent — a workspace proof was supplied for a "
@@ -191,6 +253,10 @@ def policy_record(
             enforcement_applied=False,
             workspace_readonly=False,
             workspace_witness=NOT_PROBED_WITNESS,
+            workspace_path=NOT_PROBED_WITNESS,
+            workspace_mechanism=MECHANISM_UNDETERMINED,
+            workspace_mount_readonly=None,
+            workspace_mount_witness=NOT_PROBED_WITNESS,
         )
 
     assert_read_only(caps)
@@ -211,6 +277,10 @@ def policy_record(
         enforcement_applied=True,
         workspace_readonly=True,
         workspace_witness=proof.witness,
+        workspace_path=proof.path,
+        workspace_mechanism=proof.mechanism,
+        workspace_mount_readonly=proof.mount_readonly,
+        workspace_mount_witness=proof.mount_witness,
     )
 
 
