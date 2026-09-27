@@ -1514,6 +1514,13 @@ kept out of this file, per Session 19's precedent.
   which would, and anyone setting `push.default=upstream` turns it into a silent push to
   main. `git push -u` with an explicit refspec fixed it, and that is the form recorded in
   the module docstring's wiring instructions.
+- **M17 record (2026-09-27, branch `m17-policy-windows`: `dd5e9a8`, merge `d6b7139`, stated-skip follow-up):** the
+  Windows `test_policy.py` platform gap closed **test-only** — a capability check in `ro_workspace` (attempt the
+  probe's own write; skip with the reason stated where the platform cannot refuse), `ro_mode_workspace` for the
+  consistency-not-refusal tests, the ELOOP stated skip for missing symlink privilege, and `SKIP_NO_STATVFS` for the
+  three real-mount-reading tests Windows cannot run (`os.statvfs`/`os.ST_RDONLY` absent; the product's `undetermined`
+  answer is correct but not what they assert). Merged with `origin/main` (#49) keep-both. No product code, contract,
+  endpoint, or dependency — M12 unchanged. Counts in `test-suite.md`, full record in `architecture.md`.
 
 
 
