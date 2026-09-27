@@ -51,7 +51,7 @@ break your module (from `docs/test-suite.md`'s coverage map — extend it as you
 | M10 | Orchestrator (pipeline + queue) | `backend/app/orchestrator/` | S | M9, M14 | `test_pipeline.py` |
 | M11 | LLM layer + config | `backend/app/llm/`, `config.py` | M | — | `test_llm.py`, `test_config.py` |
 | M12 | Attestor read-only policy | `backend/app/attestor/policy.py`, `backend/app/attestor/sandbox.py` | S | — | `test_policy.py` |
-| M13 | False-certified metric + mutation harness | `backend/app/metrics/` | M | M9, M14 | `test_metric.py` |
+| M13 | False-certified metric (harness withdrawn 2026-09-27) | `backend/app/metrics/` | M | M9, M14 | `test_metric.py` |
 | M14 | Persistence (db + artifacts) | `backend/app/db.py`, `store/` | S | M1 | `test_store_db.py` |
 | M15 | API surface | `backend/app/routers/`, `main.py` | M | M10, M13, M14 | `test_api.py` |
 | M16 | Dashboard | `frontend/` | M | M2, M15 | none (gap — M17 adds) |
@@ -801,13 +801,26 @@ because everything else waits on it, not because it is large.
 
 ### M13 — False-certified metric + mutation harness — **the publishable number**
 
+> **Superseded in part, 2026-09-27** — per the admin-ruled plan (`refactor-plan.md`) and
+> Session 24's decision (a): **the mutation harness is not part of the current
+> architecture.** Its branch (`bob/m13-mutation-harness`) was unpruned dead work, is now
+> **deleted from `origin`**, and was never on `main`. The two ACs that exist only to
+> *inject* mutations are **withdrawn, not failed** (struck below). **The metric itself is
+> not withdrawn** — four ACs are satisfied and ticked, and the reader that will eventually
+> feed it is live (M15, `api-surface`, `5f6f5c6`) — though it reports `measured: false`
+> until something writes `{operator, verdict}` artifacts, which nothing does today.
+
 **Purpose:** compute and defend `P(CERTIFIED | spec violation present)` by injecting
 known spec mutations and reporting per operator class. **Code:**
 `backend/app/metrics/false_certified.py` — `OPERATORS` (7, settled) and
 `false_certified_rate(results)`, which already returns
 `{false_certified_rate, measured, by_operator}` with `measured = total > 0` and a `None`
-rate when empty. **Today:** the math is done and tested; **nothing feeds it** (no
-mutation harness, no aggregation, no endpoint).
+rate when empty. **Today:** the math is done and tested. `GET /api/metrics` is **live**
+(M15, `api-surface`, `5f6f5c6`) — it aggregates `{operator, verdict}` artifacts out of
+`ARTIFACT_DIR` and reports the honest unmeasured envelope while none exist. What is still
+missing is the **producer**: run artifacts carry no `operator` key and are skipped, and
+the harness that would have written them is withdrawn, so the number stays
+`measured: false` until a data source is decided. **D15** owns the formal artifact shape.
 
 **Acceptance criteria**
 - [ ] A **mutation harness** that takes a real criterion, applies one operator, re-runs
@@ -906,6 +919,17 @@ persistence helpers live in `orchestrator/pipeline.py` (shim-touched) and
 status follows the D9 recommended default with one recorded deviation: a `PENDING` verdict
 maps to `pending` (D9's set has no "not yet decided" value; `failed` would misreport a
 fail-closed default as a crash).
+
+**M14-alignment rewire (2026-09-27, later the same day, `ac9b373`):** the core-slice shim above
+describes the pre-rewire state and is **superseded**. `orchestrator/pipeline.py` no longer owns a
+connection, DDL, a timestamp source or any SQL: writes go through `db.save_run` / `db.set_status`
+(rowcount-checked — 0 on the final flip is a blocking failure, rule 6), reads through `db.get_run` /
+`db.list_runs`, with the `id` → `run_id` projection kept at the API edge and `list_runs`' 50-row
+cap inherited. `routers/runs.py` reads artifacts through `store/records.read_artifact` (one
+canonical path resolver, writer and reader together); `routers/metrics.py` keeps its own
+aggregation reader. `backend/tests/conftest.py` redirects storage at `app.db.DATABASE_URL` — db.py's
+documented patch point, the consumer module, never `os.environ` — rather than the deleted shim
+attribute. `db.py`, `store/`, `config.py` and the contracts were still not edited (§0.4).
 
 ---
 
