@@ -125,3 +125,26 @@ Conventions that bind every lane: **shape stability** (add keys, never rename/dr
 | **5 — Ship** | 180–300 | 3 rehearsals · fallback video (Conv 6) · submission artifacts · `/end` doc pass (session logs + record the harness pruning) |
 
 **Explicitly out of scope:** mutation harness & any measured exposure · live watsonx (model id unprovisioned) · M7 real probes · GitHub write-back (D13) · HMAC (D7) · SSE/auth · **Figure 6 — do not show** (§11.11: three false claims, no committed generator) · receipt-renderer PR #26.
+
+---
+
+## 5. Execution status (appended 2026-09-27, Session 25 /end — record, not a re-plan)
+
+Kept here because Phase 4–5 are a rehearsal checklist and the honest state of each phase is
+the input to them. **The §4 table is the plan; this is what actually happened.**
+
+| Phase | State at `ac9e816` | Evidence / what is missing |
+|---|---|---|
+| **0 — Health** | **partial** | M4 merge done locally as `27ec711` (no network, so no fetch/rebase against origin). Baseline suite run on both legs. **Still open:** FE `npm install` (never run — the longest unknown the plan flagged), GiGi's Bob install/credits check (unconfirmed), and deleting `origin/bob/m13-mutation-harness` (still on the remote; deleting it needs push rights). |
+| **1 — Build** | **done for the backend lanes** | M4 ingest, M5/M6/M7-stub/M8/M9 (R4, `c073dbe`), M10 (`a7178d2`), M15 + M18 (`ab2849c`), M2 payload (`1b5be27`). **Not started:** M16 dashboard (R7). |
+| **2 — Integrate** | **done** | Every lane branch is contained in `refactor` except the D-a dropped harness branch. Fast-forwards and byte-identical duplicates reconciled; no unresolved conflict at `ac9e816`. |
+| **3 — Prove** | **backend leg done; dashboard leg not** | Cold end-to-end **run**, and it found a real defect (M9's nested `record` made every committed consumer miss the run record; served `pending` + `[]`). Fixed at the source, guards flipped, re-proved: `status: rejected`, AC-1 CERTIFIED@E4, AC-2 REJECTED@E2, CLI exit 1. **400 passed / 0 failed on 3.11.9 + 3.12.14, validator 6/6 both legs.** **Missing:** the dashboard half of the same path — `npm install && npm run build`, the `VerdictBadge` lowercase-`status` fix, `<ExposureCard>` removal, `fixtures.js` deletion, and a live render with **no fixture-mode banner**. That is the only unproven surface left in the demo. |
+| **4 — Freeze** | **not started** | No code freeze. **M18's runbook is still owed** — it was never appended to `modules.md` §M18, and the plan's own criterion is that a **non-author** executes it (FE dev). Until then there is no rehearsable Bob invocation. |
+| **5 — Ship** | **not started** | 3 rehearsals, fallback video (Convention 6), submission artifacts, final `/end` pass. |
+
+**What the demo can honestly claim now:** the gate runs as one process, a payload goes in at
+`POST /webhooks/github`, a read-only verifier adjudicates every acceptance criterion against
+the E0–E6 ladder, per-criterion verdicts with tiers and source locations are served over HTTP,
+and a non-zero exit blocks the merge. **What it cannot claim:** that the findings came from a
+live model (M7 runs on its mock findings, labelled `mode: "mock"` in the artifact), and that
+the dashboard renders it (never built).

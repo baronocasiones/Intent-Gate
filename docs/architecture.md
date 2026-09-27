@@ -5,6 +5,19 @@ governance claim, metric) lives in `docs/intent-attestation-gate.md` — this fi
 how the code implements it, endpoint by endpoint, module by module. Single source for the
 idea remains `IBM BOB.pdf` (Adrian, pp. 14–25).
 
+Status: **the gate runs end-to-end over HTTP, with real logic in every stage it
+claims** (Session 25, 2026-09-27). Last verified against code: **`ac9e816` —
+400 passed, 0 failed on 3.11.9 AND 3.12.14, validator exit 0 (6/6) on both
+legs, tree clean**, plus a **cold end-to-end run** (server → webhook →
+`scripts/attest.py` → `GET /api/runs/{id}`) serving `status: rejected`,
+AC-1 CERTIFIED@E4 and AC-2 REJECTED@E2, CLI exit 1. Real: M4 ingest, M5
+extract, M8 adjudicate (E0–E6 ladder), M9 emit (derived `exit_code` + flat run
+record), M10 worker, M14 persistence, M15 serving, M18 CLI, M1 contracts, M3
+mirrors. Still stub or absent: **M7 real probes** (mock findings only), `/api/metrics`
+(hard-coded), live watsonx.ai, GitHub write-back, and the **dashboard build**
+(`npm install` never run, so the fixed `_dist` mount is unproven). §11 gaps and
+`docs/test-suite.md` carry the detail. History below.
+
 Status: **scaffold** — FastAPI process boots, pipeline stub path runs end-to-end,
 contract validator passes; gates/routers/store return stubs or TODOs (see §11 gaps).
 Last verified against code: **2026-09-27** (Session 21 — 7 mirrors in `app/models/schemas.py`
@@ -970,3 +983,9 @@ was correct throughout; the drift was entirely in prose. All ten are now correct
 - **New finding, NOT fixed (owner M15/M16, adjacent to D16):** `GET /api/runs` (list) reports the **row lifecycle** status while `GET /api/runs/{id}` (detail) reports the **artifact verdict**, under the same field name — so a list of executed runs all read `pending`. The dashboard fetches **only** the detail endpoint (`frontend/src/api.js`), so the demo is unaffected; the inconsistency is a naming decision for the API surface's owner, not something to change unilaterally in the last hours. Recorded, not papered over.
 - **API endpoints:** none added/changed/removed. `GET /api/runs` and `GET /api/runs/{id}` are *unchanged* — the defect was in what M9 wrote, and both endpoints now serve the real record. **Dependencies added:** none.
 - **Process note:** `pkill -f "uvicorn app.main"` matches the *invoking shell's own* command line and killed the command that launched the second server; `[u]vicorn` avoids it. Recorded because the first failed start looked like a product failure and was not.
+
+### 2026-09-27 — Session 25 (/end): branch state at `ac9e816`, and what is still not real
+- **Integration closed (Role 3's remaining job).** Every lane branch is now contained in `refactor` **except** `origin/bob/m13-mutation-harness` — 2 commits, dropped by decision D-a (the mutation harness is not part of this architecture; it was never on `main`, so §9, `exposure.schema.json` and the `/api/metrics` stub are unaffected). The M10 lane's record merged as a **fast-forward** (that lane had rebased onto the tip); the M15/M18 work arrived twice — as `2048e7c` in a linked worktree and as `ab2849c` on the branch — and the two are **byte-identical trees**, so nothing was owed. The M4-ingest branch merged into `main` as `27ec711` and `refactor` was reset onto it.
+- **Suite state at `ac9e816`:** 18 test files, **400 passed / 0 failed on 3.11.9 and 3.12.14**, validator **6/6 exit 0** both legs, repo tree clean (the E2E ran with `DATABASE_URL` and `ARTIFACT_DIR` pointed at `/tmp`, so no `attestation.db` or `artifacts/` was written into the tree).
+- **Not built, and named here so the demo does not claim it:** M7's real probes (the chain runs on the mock findings stub — `mode: "mock"`, `tokens_spent: 0`, which is *visible provenance*, not a hidden fallback), a live watsonx.ai call, `/api/metrics` (still a hard-coded stub), GitHub write-back, the review-debt ledger, the cross-file hash chain (`prev_digest` stays `null` — D15), and the **React build** (`npm install` has never run, so `mount_dashboard`'s fixed `_dist` path is asserted by unit test but never exercised against a real `frontend/dist`).
+- **`refactor` is unpushed and unverifiable against the remote:** no network to origin on this machine (`git fetch` fails, SSH publickey denied), so `origin/refactor`'s tip cannot be reconciled from here. Push when the network allows; if it is rejected as non-fast-forward, fetch + merge + re-run the 400/400 gate before shipping.
