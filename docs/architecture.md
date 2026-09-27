@@ -160,6 +160,7 @@ wired yet.
 7. Missing vs spec: GitHub write-back (comments + check runs), review-debt ledger, risk-weighted exposure decay curve, signed cross-file hash chain, SSE/polling, auth, real demo-repo target.
 8. Dependencies pinned in `backend/requirements.txt`: fastapi 0.135.3, uvicorn 0.44.0, pydantic 2.13.0, httpx 0.28.1, jsonschema 4.26.0, pytest 9.0.3, pytest-asyncio 1.4.0. Smoke tests in `backend/tests/test_scaffold.py` (pipeline stub path, policy guard, metric-empty) are the only coverage.
 9. **Dual-mode is not wired** (found 2026-09-27 while reconciling Figure 6 — previously unrecorded). `MOCK_LLM` has no reader in `backend/app`, so nothing selects between `mock_client` and the live client; `mock_client` is unreachable from product code. `modules.md` rule 4 and AGENTS.md Convention 4 both assume a switch that does not exist. Owner: **M11**, and it is a prerequisite for M7's fan-out, not a nicety.
+10. **The pydantic mirrors have zero product callers** (found 2026-09-27, Session 18). As of that session `app.models.schemas` is imported by `test_models_parity.py` and `test_schemas_contracts.py` and by **nothing else** — no gate, router, orchestrator or metric module uses it. M3 completed (5/5 parity, 100 tests green) but is not yet load-bearing; the models become real only when M4–M9 and M13/M15 construct and consume them. Related: the strictness added in Session 18 makes two paths that do not exist yet — reading a `write_artifact` envelope into `RunRecord` (`sha256` is not a contract key) and validating M9's record (a superset of `run.schema.json`) — require key projection first. Both are recorded in `modules.md` §M3 as M9/M14 obligations.
 11. **Figure 6 asserts three things that are false, and cannot be regenerated** (found 2026-09-27, Session 18, while documenting the M1 contracts work).
     - The **Contracts (M1)** box reads "5 JSON Schemas (draft-07)" and "validator covers 2 of 5 pairs". The truth is **6 schemas and 6 pairs**, all covered and enforced.
     - The **Exposure (M9)** box reads "NOT built — exposure schema has no PAIRS entry". That orphan is exactly what Session 18 closed: `exposure.schema.json` now has `contracts/examples/exposure.json` and a `PAIRS` entry. The box is the thing that is wrong, not the code.
@@ -173,7 +174,18 @@ wired yet.
     > PR #26 lands**: the merged list reads 1–9, 10 receipt, 11 figure. Taking 10
     > here instead would have put two entries at 10 on merge — the same collision
     > this list already had to arbitrate once on that branch, where gaps 9 and 10
-    > both claimed slot 9. If PR #26 is closed unmerged, reclaim 10 for this entry.
+    > both claimed slot 9.
+    >
+    > **SUPERSEDED at the merge of `tests` into `main` (Session 19).** Slot 10 was not
+    > free after all: the merge base carried a numbered gap 10 — "the pydantic mirrors have
+    > zero product callers" — which had been dropped from this list without comment. It is
+    > still true (nothing outside `test_models_parity.py` and `test_schemas_contracts.py`
+    > imports `app.models.schemas`), so it is **restored as 10** rather than lost. The
+    > merged list reads 1–9, 10 mirrors, 11 figure, 12 enum enforcement.
+    > **PR #26's receipt gap must take 13, not 10** — taking 10 again is the collision this
+    > note exists to prevent.
+
+12. **The mirrors' enum enforcement has no regression guard** (found 2026-09-27, Session 19, verification-only). `app/models/schemas.py` is documented in its own docstring as "the STRICT trust layer… these are the shapes a verdict rests on", and `EvidenceTier` / `Verdict` are `Literal`s, so the models *do* reject out-of-enum values today (verified: `evidence_tier="EVERYTHING_IS_FINE"` and `verdict="PROBABLY_FINE"` both raise `ValidationError`). What is missing is the test that would notice if they stopped: `test_schemas_contracts.py` pins the two type **aliases** through `typing.get_args`, and `test_models_parity.py` pins field **names** — so the alias→field wiring is asserted by neither. Re-typing `CriterionVerdict.evidence_tier`, `CriterionVerdict.verdict` or `TraceabilityLink.evidence_tier` from its `Literal` to `str` passes all 100 tests. **This is a missing guard, not a live defect** — recorded here because §11.10 already says the mirrors are not yet load-bearing, and a silently-accepted `evidence_tier` is exactly the fail-open posture `modules.md` rule 6 forbids. Owner: M3 or M17, unassigned; details and the mutation evidence in `docs/test-suite.md`.
 
 ## 12. Monorepo layout (as on disk)
 
@@ -524,8 +536,111 @@ was correct throughout; the drift was entirely in prose. All ten are now correct
   property that made the figure trustworthy — that every line is generated and auditable.
   Recorded as §11 gap 11 (slot 10 reserved for PR #26's receipt gap, so nothing renumbers
   on merge).
+### 2026-09-27 — Session 19: verification of the M3 parity suite (no code change)
+- Instruction: *"verify all the new tests added"*. Scope = the 21 tests added at
+  Session 18. **This session changed no product code, contract, fixture, test,
+  dependency or endpoint.** HEAD `c78df43` before and after; the tree is clean,
+  which also means Session 18's note that Sessions 16/17 left *uncommitted* log
+  appends here and in `modules.md` is now stale — those landed in `c78df43`.
+- **Verified:** 100 passed on **3.11.9 and 3.12.14**, validator exit 0 on both,
+  `79 + 21 = 100` confirmed by per-file collection counts, tree unpolluted.
+- **Parity recomputed independently of the test's own helpers** (AST rather than
+  `inspect`, direct contract glob) so a shared bug could not hide in both: 5
+  contract titles, 6 mirrors, 1 strict base, `TraceabilityLink` the only model
+  with no titled contract. The 5/5 claim holds.
+- **13 mutations against a throwaway copy per mutation; 11 killed.** The parity
+  bijection, the self-invalidating `INLINE_MIRRORS` exception, `extra="forbid"`,
+  Criterion's mandatory fields, contract-gains-a-property coverage,
+  `by_operator` typing, the honesty pin, the inline link shape and the
+  `locations` default all fire. Both survivors were re-checked by hand and were
+  harness artifacts — a missed collection-time `ImportError`, and an equivalent
+  mutant (pydantic 2.13 deep-copies mutable defaults, so a bare `[]` default is
+  not a bug).
+- **Added gap §11.12:** the mirrors' enum enforcement has no regression guard.
+  The aliases are pinned, the fields that use them are not, so re-typing
+  `CriterionVerdict.evidence_tier` / `.verdict` or `TraceabilityLink.evidence_tier`
+  to `str` passes all 100 tests. Product code is correct today; the guard is
+  missing. Belongs in §11 rather than only in the test record because §11.10
+  already concedes the mirrors are not load-bearing, and this is a hole in the
+  trust layer's stated guarantee.
+- **A second finding stayed in the test record:** `test_models_parity.py`'s
+  `_contracts_by_file` docstring says the file name and `title` disagree for
+  *one* contract; it is *three* (`run`, `traceability`, `verdict`). Code
+  correct, rationale wrong. Left unfixed — fixing it is a code change.
+- **New pattern: a survivor is a question, not a verdict.** Both non-kills were
+  resolved by reading pydantic and pytest source rather than by reporting or
+  silently dropping them, extending Session 16's rule that a guard never seen
+  failing is not a guard, and Session 18's that guards must be proven to fire.
+  The corollary now recorded: **an audit script that reports a survivor owes a
+  hand-check before it is written down** — a harness that only matches
+  `file::test` IDs will mis-report a collection error as a weak guard, which is
+  how a real gap gets buried under a false one.
+- **Process note, recorded because it nearly went unnoticed:** the first attempt
+  at the §11.12 append anchored on a mid-line substring. The edit tool matched
+  loosely and replaced the whole surrounding clause with whitespace, deleting
+  half of §11.10. Caught only because the append was checked for deletions
+  rather than assumed additive; `git checkout` restored it and the append was
+  redone as a line-boundary insertion. **A file that is "only being appended to"
+  is not automatically append-only** — verify the diff, and anchor on line
+  boundaries.
+- **Open at archive:** unchanged from Session 18 — 17 of 18 modules remain,
+  **Wave 0 (M1, M11, M12) still unbuilt and still gates Wave 1**, D1–D13
+  unsettled, M1's two requests outstanding, module ownership unassigned. New
+  this session: the §11.12 guard needs a negative assertion and the comment fix
+  needs an owner (M3 or M17 — `test_models_parity.py` is M3-exclusive,
+  `backend/tests/` is M17's). Per `modules.md` rule 10 and the Session 16
+  precedent, `modules.md` was deliberately **not** edited.
 
-### 2026-09-27 — Session 19: M13 mutation harness seam (partial module)
+### 2026-09-27 — Session 20: merge `origin/main` into `tests` (conflict resolution)
+- **Instruction:** *"resolve git merge conflict"*. A merge of `origin/main`
+  (`25c76a7`, 8 commits) into `tests` (`dea1321`) was already in progress with the
+  two doc conflicts staged as resolved. **This entry records the resolution; it
+  changed no product code.**
+- **What the conflict actually was:** both branches appended a Session entry to
+  the same tail of `docs/architecture.md` and `docs/test-suite.md` — ours
+  *"Session 19: verification of the M3 parity suite"*, theirs *"Session 18: M1
+  contracts — orphan schemas closed, findings added"*. Purely additive on both
+  sides, so the correct resolution was to **keep both**. Verified in the index
+  before committing: all four Session logs (13, 18-M3, 18-M1, 19) are present and
+  the stage-resolved files carry no conflict markers.
+- **A §11 renumbering fell out of the merge, and is correct.** `origin/main` added
+  its own gap 11 (*"Figure 6 asserts three things that are false"*), so the
+  Session 19 enum gap was renumbered **11 → 12**. No stale `§11.11` reference
+  survives in any of the three records — `AGENTS.md` and both doc files all read
+  §11.12. Verified by grep, not by eye.
+- **Restored a corrupted working tree.** The staged resolution was clean, but the
+  working tree had raw three-way conflict-marker fences re-injected on top of
+  both doc files — `git status` read *"All conflicts fixed"* while the files on
+  disk still held markers. Left alone, a `git add .` would have committed them.
+  Fixed with `git restore --worktree` (from the **index**, not `HEAD`, so the
+  merge resolution itself was preserved), then re-grepped for markers. Backup of
+  the pre-fix tree and `.git` at `/tmp/opencode/merge-2026-09-27/`.
+- **The merged tree is NOT green, and that is the merge's real output.** Both
+  branches were green alone; together they are **112 tests, 109 pass, 3 fail**:
+  `test_contract_model_parity_is_a_bijection`,
+  `test_model_fields_cover_contract_properties[Finding]` and
+  `test_required_contract_fields_are_model_fields[Finding]`. Cause: M1 landed
+  `contracts/findings.schema.json` (title `Finding`, 5 required properties) and
+  M3's `app/models/schemas.py` has no `Finding` mirror — `backend/app/models/schemas.py`
+  is M3's exclusive path (`modules.md` §0.4), and no session on either branch
+  wrote it. **This is the parity test working exactly as designed**, whose own
+  docstring says the failure is *"the contracts-first rule working — do not
+  suppress it, mirror the schema."* It is **not** a test bug and must not be
+  silenced (`modules.md` rule 8). Fix = add the `Finding` mirror; owner M3.
+- **Counts in this file are now branch-relative, not absolute.** "100 tests / 79 +
+  21" was true on `tests` and is preserved as the historical record; after the
+  merge the total is **112** (79 baseline + 10 from M1's contracts guard + 21
+  from M3's parity suite + 2 from `Finding` joining the parametrized set).
+  Historical entries were **not** rewritten — a record that was true when
+  written stays true; this entry carries the new number.
+- **Conventions:** `scripts/validate_contracts.py` is green at **6/6 schemas**
+  (M1 extended `PAIRS` from 5 to 6 and added `contracts/examples/*.json`), so the
+  contract side of the merge is complete — only the pydantic mirror lags.
+- **Open at archive:** unchanged otherwise — 17 of 18 modules, Wave 0 still
+  unbuilt. New: the `Finding` mirror is now a hard blocker for a green tree, and
+  the merged count (112) needs to reach the `Status:` line and `§12` layout
+  count, which still say 11 test files / 100 tests.
+### 2026-09-27 — Session 21: M13 mutation harness seam (partial module)
 
 - Added `backend/app/metrics/mutation_harness.py`: all seven settled M13 operators now
   have deterministic provisional criterion transformations. Each case validates through
