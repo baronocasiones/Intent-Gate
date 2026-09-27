@@ -5,23 +5,43 @@ lives in `docs/architecture.md` (code-faithful) and `docs/intent-attestation-gat
 (concept); this file records only how the suite is organized, run, and extended.
 
 Status: **scaffold + architecture-derived unit tests + M1 contracts guard + M3 parity guard
-for all six contracts + the M12 attestor mechanism/record suite** — **192 collected: 191
-passed, 1 failed.** The one failure is **pre-existing and not M12's** (§ Known gaps);
-`test_policy.py` is **75 passed, 0 failed, 0 skipped**. Composition: 179 at Session 21's
-`4b03c55` baseline + 12 from Session 22's `test_policy.py` + 1 from the M2 fixture merge
-(`88095b2`, see the failure below), and one pre-existing red.
-Last verified 2026-09-27 on **three** interpreters, two of which are the CI matrix:
-**3.11.16 · 3.12.14** (both provisioned fresh from `backend/requirements.txt` for this
-session, since neither was installed on the box) and **3.14.7** as the forward-compat
-leg. **Identical result on all three** — `1 failed, 191 passed` — and validator exit 0 on
-every leg. Run as **uid 1000, not root**, so all 21 `SKIP_AS_ROOT`-decorated cases actually
-executed rather than skipping: the 0555-directory and `EACCES` paths were genuinely
-exercised, which is the stronger result. **Zero skips, zero residue** —
-`find / -name '.attestor_write_probe'` returns nothing and the source tree is
-byte-identical before and after (Convention 3). 3.11 + 3.12 remain the CI matrix; 3.10 is
-the documented dependency floor and 3.14 is a deliberate forward-compatibility leg, and
-**both are green but enforced by nothing** — widening `tests.yml` is a **decision owed**,
-not a fix (see Known gaps). 3.13 has no interpreter and is untested.
+for all six contracts + the M12 attestor mechanism/record suite + M14 persistence guards** —
+**223 collected: 222 passed, 1 failed, 0 skipped.** The one failure is **pre-existing and
+inherited from `main`** (recorded below and as §11.15 by M14 independently); `test_policy.py`
+is **75 passed, 0 failed, 0 skipped** and is byte-identical to the tree whose guards were
+mutation-proven.
+
+**Composition, and it closes exactly** (both branches were cut from `4b03c55`, so their
+deltas are separable and the arithmetic is a check rather than a guess):
+```
+  180   4b03c55  — the merge base, measured directly in a throwaway worktree
++  12   M12       — test_policy.py 63 → 75
++  31   M14       — test_store_db.py 9 → 33, plus new test_store_records.py (+7)
+= 223   measured, on both matrix legs
+```
+**M14's own log states its contribution as "+40", and that is wrong by 9.** It counted the
+*final size* of its two files (33 + 7 = 40) as its *delta*, but `test_store_db.py` already
+held 9 tests at `4b03c55` from an earlier module, so the real delta is **+31**. Its implied
+baseline of ~171 is therefore not a real count; **180 is**, confirmed by direct measurement
+rather than by picking a side. Not a functions-vs-items confusion either — at `4b03c55` there
+were 180 items against 165 `def test_` functions (a 15-case parametrised spread), and 171 is
+neither number. Recorded rather than edited: the M14 entry is not this session's to rewrite
+(append-only, and it is another module's log), so the correction lives here and in the M12
+entry below. **Third count in three sessions to be wrong in-tree, and all three were
+"contribution" figures rather than totals** — a total is measured, a contribution is
+arithmetic, and the arithmetic is where the errors are.
+
+Last verified 2026-09-27 on **both CI-matrix legs — 3.11.16 and 3.12.14**, `1 failed, 222
+passed` **identical on each**, validator exit 0 with `OK 6/6 schemas covered` on both, and
+**0 skipped measured via `-rs`** (no skip section at all, so it is observed rather than
+inferred). 3.14.7 was also green pre-merge at 192/191 and is a deliberate
+forward-compatibility leg. Run as **uid 1000, not root**, so all 21 `SKIP_AS_ROOT`-decorated
+cases actually executed rather than skipping — the 0555-directory and `EACCES` paths were
+genuinely exercised, which is the stronger result. **Zero residue**:
+`find . -name '.attestor_write_probe'` returns nothing, no `attestation.db`, no `artifacts/`,
+and the tree was clean before and after. 3.10 is the documented dependency floor and 3.14 a
+forward-compat leg, and **both are green but enforced by nothing** — widening `tests.yml` is
+a **decision owed**, not a fix (see Known gaps). 3.13 has no interpreter and is untested.
 
 > **The one failure, stated precisely, because "unfinished work" is the wrong label.**
 > `test_models_parity.py::test_demo_traceability_fixture_loads_into_model` asserts every
@@ -29,7 +49,7 @@ not a fix (see Known gaps). 3.13 has no interpreter and is untested.
 > (`88095b2`, merged as `4b03c55` = HEAD) set them to **E4 and E2** and updated
 > `test_schemas_contracts.py` — **not** `test_models_parity.py`. It is a **missed test-guard
 > flip (rule 4 / Convention 10) in a merge**, not a stub that later work will resolve, and
-> it is **two** stale assertions (lines 385 and 386; the `locations == []` one fails next),
+> it is **two** stale assertions (lines 385 and 387; the `locations == []` one fails next),
 > not one. Proven pre-existing by running the suite against a pristine `git archive HEAD`
 > extraction: `1 failed, 179 passed` — same test, same failure, with M12 absent.
 > **Not actioned by this session:** `test_models_parity.py` is M3's file (§0.4) and the
@@ -652,6 +672,11 @@ failure** on both legs (the failure re-proven pre-existing on parent
 > **Heading relabelled, content untouched** — see the note at the head of the preceding
 > M12 entry. This sub-entry was "Session 22 verification"; the number is gone for the same
 > reason and its prose still uses it to mean this session.
+>
+> **The 192 in this heading is a point-in-time figure** describing commit `936db35` before
+> the merge with `main`. It is preserved rather than rewritten, per the same rule this file
+> applies to every other historical number. **The shipped figure is 223 collected / 222
+> passed / 1 failed** — see the `Status:` block for the composition.
 
 - **Run as uid 1000, not root** — so all **21** `SKIP_AS_ROOT`-decorated cases executed
   rather than skipping. That matters: the 0555-directory and real-`EACCES` paths are the
@@ -718,6 +743,32 @@ failure** on both legs (the failure re-proven pre-existing on parent
   `4b03c55` baseline **+ 12** from this session's `test_policy.py` **+ 1** from the M2
   fixture merge, of which **1 is a pre-existing failure**. A bare count is how "118" went
   stale twice in three sessions; the composition is what actually transfers.
+- **Post-merge addendum — the shipped tree is 223, and this session's 7/7 proof still
+  applies.** After merging `origin/main` (`bf52608`, M14) at `555f4da`: **223 collected, 222
+  passed, 1 failed, 0 skipped**, identical on **3.11.16 and 3.12.14**, validator exit 0 on
+  both. **`backend/app/attestor/{policy,sandbox}.py` and `test_policy.py` are byte-identical
+  to `936db35`** (blob hashes matched), so the mutation proof was not re-run and did not
+  need to be: the artefact that was proven is the artefact that ships. Re-proving ceremony
+  on an unchanged file would have been a way of appearing thorough.
+- **The merge also settled a cross-session count disagreement, by measurement.**
+  M14's log claims a contribution of **+40**; the real delta is **+31**, because
+  `test_store_db.py` already held 9 tests at the merge base `4b03c55`. Re-measured in a
+  throwaway worktree: **180 at `4b03c55`** is correct, and 180 + 12 + 31 = 223 closes
+  exactly. So M14's implied ~171 baseline was never a real count. **Recorded here rather
+  than edited in the M14 entry** — append-only, and it is another module's log. Worth
+  naming the pattern: this is the *third* wrong in-tree count in three sessions and **all
+  three were contributions, not totals.** A total is measured; a contribution is
+  subtraction, and the subtraction is where the errors live. When a session reports
+  "N tests, M of them new", check the arithmetic against a worktree before it is written down.
+- **The pre-existing failure has a second stale assertion, and it is currently invisible.**
+  `test_demo_traceability_fixture_loads_into_model` aborts at line 385, so line 387 never
+  executes — meaning **no run has ever reported it**. Both were evaluated read-only through
+  the model: `evidence_tier` is `['E4','E2']` against an all-`E0` expectation, and
+  `locations` is `[['src/refund.py:64'], ['src/refund.py:88']]` against an all-`[]`
+  expectation, so **both fail**. **The fix is one guard with two assertions, not one**, owned
+  by M2+M3. A reviewer patching only the line the failure names would ship a still-red
+  suite and conclude the fix did not work. (This correction supersedes the "lines 385 and
+  386" wording above: it is 385 and 387.)
 
 
 > **Merge point — both entries below are from parallel sessions on the same date, and
