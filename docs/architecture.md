@@ -157,6 +157,8 @@ wired yet.
 9. **Dual-mode is not wired** (found 2026-09-27 while reconciling Figure 6 — previously unrecorded). `MOCK_LLM` has no reader in `backend/app`, so nothing selects between `mock_client` and the live client; `mock_client` is unreachable from product code. `modules.md` rule 4 and AGENTS.md Convention 4 both assume a switch that does not exist. Owner: **M11**, and it is a prerequisite for M7's fan-out, not a nicety.
 10. **The pydantic mirrors have zero product callers** (found 2026-09-27, Session 18). As of that session `app.models.schemas` is imported by `test_models_parity.py` and `test_schemas_contracts.py` and by **nothing else** — no gate, router, orchestrator or metric module uses it. M3 completed (5/5 parity, 100 tests green) but is not yet load-bearing; the models become real only when M4–M9 and M13/M15 construct and consume them. Related: the strictness added in Session 18 makes two paths that do not exist yet — reading a `write_artifact` envelope into `RunRecord` (`sha256` is not a contract key) and validating M9's record (a superset of `run.schema.json`) — require key projection first. Both are recorded in `modules.md` §M3 as M9/M14 obligations.
 
+11. **The mirrors' enum enforcement has no regression guard** (found 2026-09-27, Session 19, verification-only). `app/models/schemas.py` is documented in its own docstring as "the STRICT trust layer… these are the shapes a verdict rests on", and `EvidenceTier` / `Verdict` are `Literal`s, so the models *do* reject out-of-enum values today (verified: `evidence_tier="EVERYTHING_IS_FINE"` and `verdict="PROBABLY_FINE"` both raise `ValidationError`). What is missing is the test that would notice if they stopped: `test_schemas_contracts.py` pins the two type **aliases** through `typing.get_args`, and `test_models_parity.py` pins field **names** — so the alias→field wiring is asserted by neither. Re-typing `CriterionVerdict.evidence_tier`, `CriterionVerdict.verdict` or `TraceabilityLink.evidence_tier` from its `Literal` to `str` passes all 100 tests. **This is a missing guard, not a live defect** — recorded here because §11.10 already says the mirrors are not yet load-bearing, and a silently-accepted `evidence_tier` is exactly the fail-open posture `modules.md` rule 6 forbids. Owner: M3 or M17, unassigned; details and the mutation evidence in `docs/test-suite.md`.
+
 ## 12. Monorepo layout (as on disk)
 
 ```
@@ -440,3 +442,58 @@ it should be repeated whenever the figure or a module boundary changes.
   add `findings.schema.json`. `criterion` and `exposure` still have no fixture pair.
   Sessions 16 and 17 left uncommitted log appends in this file and in `modules.md`; this
   session's appends sit after theirs, so any commit of this file carries all three.
+
+### 2026-09-27 — Session 19: verification of the M3 parity suite (no code change)
+- Instruction: *"verify all the new tests added"*. Scope = the 21 tests added at
+  Session 18. **This session changed no product code, contract, fixture, test,
+  dependency or endpoint.** HEAD `c78df43` before and after; the tree is clean,
+  which also means Session 18's note that Sessions 16/17 left *uncommitted* log
+  appends here and in `modules.md` is now stale — those landed in `c78df43`.
+- **Verified:** 100 passed on **3.11.9 and 3.12.14**, validator exit 0 on both,
+  `79 + 21 = 100` confirmed by per-file collection counts, tree unpolluted.
+- **Parity recomputed independently of the test's own helpers** (AST rather than
+  `inspect`, direct contract glob) so a shared bug could not hide in both: 5
+  contract titles, 6 mirrors, 1 strict base, `TraceabilityLink` the only model
+  with no titled contract. The 5/5 claim holds.
+- **13 mutations against a throwaway copy per mutation; 11 killed.** The parity
+  bijection, the self-invalidating `INLINE_MIRRORS` exception, `extra="forbid"`,
+  Criterion's mandatory fields, contract-gains-a-property coverage,
+  `by_operator` typing, the honesty pin, the inline link shape and the
+  `locations` default all fire. Both survivors were re-checked by hand and were
+  harness artifacts — a missed collection-time `ImportError`, and an equivalent
+  mutant (pydantic 2.13 deep-copies mutable defaults, so a bare `[]` default is
+  not a bug).
+- **Added gap §11.11:** the mirrors' enum enforcement has no regression guard.
+  The aliases are pinned, the fields that use them are not, so re-typing
+  `CriterionVerdict.evidence_tier` / `.verdict` or `TraceabilityLink.evidence_tier`
+  to `str` passes all 100 tests. Product code is correct today; the guard is
+  missing. Belongs in §11 rather than only in the test record because §11.10
+  already concedes the mirrors are not load-bearing, and this is a hole in the
+  trust layer's stated guarantee.
+- **A second finding stayed in the test record:** `test_models_parity.py`'s
+  `_contracts_by_file` docstring says the file name and `title` disagree for
+  *one* contract; it is *three* (`run`, `traceability`, `verdict`). Code
+  correct, rationale wrong. Left unfixed — fixing it is a code change.
+- **New pattern: a survivor is a question, not a verdict.** Both non-kills were
+  resolved by reading pydantic and pytest source rather than by reporting or
+  silently dropping them, extending Session 16's rule that a guard never seen
+  failing is not a guard, and Session 18's that guards must be proven to fire.
+  The corollary now recorded: **an audit script that reports a survivor owes a
+  hand-check before it is written down** — a harness that only matches
+  `file::test` IDs will mis-report a collection error as a weak guard, which is
+  how a real gap gets buried under a false one.
+- **Process note, recorded because it nearly went unnoticed:** the first attempt
+  at the §11.11 append anchored on a mid-line substring. The edit tool matched
+  loosely and replaced the whole surrounding clause with whitespace, deleting
+  half of §11.10. Caught only because the append was checked for deletions
+  rather than assumed additive; `git checkout` restored it and the append was
+  redone as a line-boundary insertion. **A file that is "only being appended to"
+  is not automatically append-only** — verify the diff, and anchor on line
+  boundaries.
+- **Open at archive:** unchanged from Session 18 — 17 of 18 modules remain,
+  **Wave 0 (M1, M11, M12) still unbuilt and still gates Wave 1**, D1–D13
+  unsettled, M1's two requests outstanding, module ownership unassigned. New
+  this session: the §11.11 guard needs a negative assertion and the comment fix
+  needs an owner (M3 or M17 — `test_models_parity.py` is M3-exclusive,
+  `backend/tests/` is M17's). Per `modules.md` rule 10 and the Session 16
+  precedent, `modules.md` was deliberately **not** edited.

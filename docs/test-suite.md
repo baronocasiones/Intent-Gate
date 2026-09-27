@@ -119,6 +119,25 @@ the attestor box ↔ `test_policy.py`, the metering note ↔ `test_llm.py` /
 - **CI is still unverified on GitHub.** Every number in this file is local
   evidence from 3.11.9 / 3.12.14. The workflow has never run remotely, because
   the branch has not been pushed.
+- **The enum regression guard is one layer short** (found 2026-09-27, Session 19).
+  `test_schemas_contracts.py` pins the **aliases** `Verdict` and `EvidenceTier`
+  via `typing.get_args`, and `test_models_parity.py` pins field **names** only —
+  so nothing asserts the models actually *use* those aliases. De-typing
+  `CriterionVerdict.evidence_tier`, `CriterionVerdict.verdict` or
+  `TraceabilityLink.evidence_tier` from its `Literal` to `str` passes all 100
+  tests. **The product code is correct today** — the models do reject
+  `evidence_tier="E9"` and `verdict="MAYBE"` with `ValidationError`; only the
+  guard is missing. Owner: M3 (the mirrors) or M17 (the suite); unassigned.
+- **A false claim in a test comment, left in place** (found 2026-09-27, Session 19).
+  `_contracts_by_file`'s docstring in `test_models_parity.py` says the file name
+  and the `title` "disagree for one contract" (`traceability.schema.json`). They
+  disagree for **three**: also `run.schema.json` (`run` vs `RunRecord`) and
+  `verdict.schema.json` (`verdict` vs `CriterionVerdict`); only `criterion` and
+  `exposure` follow the stem convention. The code is correct — it keys by file
+  name properly — but the stated *rationale* for keeping two lookup helpers is
+  wrong, and acting on it ("only traceability is odd, so let me rename the other
+  two") would change contract file identity in M1's directory. Not fixed: this
+  session changed no code.
 
 ## CI
 
@@ -199,3 +218,62 @@ executed this workflow.
   The mirrors have zero product callers (§11.10), so this suite proves shape
   fidelity only. **CI has still never run on GitHub** — every number here is
   local evidence.
+
+### 2026-09-27 — Session 19: verify the M3 parity suite (read-only, no code change)
+- Instruction: *"verify all the new tests added"*. Scope = the 21 tests added at
+  Session 18 in `backend/tests/test_models_parity.py`. **Verification only — no
+  product code, contract, fixture, test or dependency was changed.** HEAD stayed
+  `c78df43` and the tree was clean before and after.
+- **Baseline re-confirmed:** 100 passed on **3.11.9 and 3.12.14**; validator exit
+  0 on both legs; `79 + 21 = 100` confirmed by per-file collection counts;
+  working tree unpolluted.
+- **Parity claim recomputed independently.** Deliberately *not* by reusing the
+  test's own `inspect`-based helpers (a shared bug would hide in both): parsed
+  `schemas.py` with `ast` and globbed the contracts directly. 5 contract titles,
+  6 mirrors, 1 strict base (`ContractModel`), `TraceabilityLink` the only model
+  with no titled contract. The 5/5 claim holds.
+- **All guards mutation-tested, 13 mutations**, each breaking one product or
+  contract fact a guard claims to pin, run against a fresh throwaway copy per
+  mutation so the real tree was never written to. **11 of 13 killed:** parity
+  bijection (dropped model, stray model, renamed title), the self-invalidating
+  `INLINE_MIRRORS` exception (M1 promoting the inline link to a real contract
+  correctly *demands its own deletion*), `extra="forbid"`, Criterion's three
+  mandatory fields, contract-gains-a-property coverage, `by_operator` specific
+  typing, the honesty pin (2 mutations), inline link shape, and the
+  `locations` default. No vacuous tests: an AST scan confirms every test
+  contains an `assert` or `pytest.raises`, and there are no trivial asserts.
+- **The 2 survivors were re-checked by hand, not reported** (Session 16's rule
+  that an audit script returning a false alarm gets verified before it is
+  believed). Both were harness artifacts, not weak guards:
+  1. *dropping the `Criterion` model* looked like a survival only because the
+     harness matched `file::test` IDs and missed a collection-time `ImportError`.
+     The suite **does** refuse to run without the model.
+  2. *`links: []` as a bare mutable default* is an **equivalent mutant** —
+     pydantic 2.13.0 deep-copies mutable defaults (verified: appending to one
+     instance's list does not leak into another's), so correctly not caught.
+- **Finding — the enum guard is one layer short.** Both literal tests inspect the
+  type *alias* (`typing.get_args(Verdict)` / `(EvidenceTier)`); the parity file
+  checks field *names*. So the alias→field wiring is unpinned, and de-typing any
+  of the three enum-annotated fields to `str` survives the full suite. The
+  product is right today (nonsense tiers and verdicts are rejected); the safety
+  net is one layer short. Recorded in *Known gaps* above and as
+  `architecture.md` §11.11, because the mirrors are documented as the strict
+  trust layer "these are the shapes a verdict rests on" — and a gate that
+  accepted `evidence_tier="E9"` is the fail-open failure this project exists to
+  prevent.
+- **Finding — a false claim in a test comment.** `_contracts_by_file`'s docstring
+  understates the file-name/`title` disagreement as one contract when it is
+  three. The code is right, the rationale is wrong. Left unfixed and recorded,
+  since fixing it is a code change and this session changed none.
+- **This is the seventh documented instance of a doc in this repo being wrong
+  about the code**, after §3's "7 failure classes" (six), §7's `MOCK_LLM` claim,
+  Session 17's correction of that correction, Session 16's over-claiming figure
+  legend, and two in Session 18. All three of this session's surviving
+  doc-vs-code checks were resolved by reading source rather than the
+  neighbouring doc.
+- **Open, deliberately not actioned:** the enum guard needs a new negative
+  assertion, and the comment needs correcting — but
+  `test_models_parity.py` is an M3-exclusive path and `backend/tests/` is M17's,
+  so which owner takes the fix is an assignment question, not this session's to
+  make. Per `modules.md` rule 10 and the Session 16 precedent, `modules.md` was
+  **not** edited for these findings.
