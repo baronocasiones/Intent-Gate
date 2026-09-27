@@ -1312,7 +1312,16 @@ kept out of this file, per Session 19's precedent.
   still pins no transitive dependency, so **no leg of this verification is reproducible**
   until M17 decides on pins or a lockfile.
 
-### 2026-09-27 — Session 22: M12 fits the current architecture (A + B + C)
+### 2026-09-27 — M12: fits the current architecture (A + B + C)
+
+> **Heading relabelled, content untouched.** This entry was "Session 22" until the merge
+> that unblocked PR #48, because `main` independently carries a *"Session 22: M14
+> persistence"* and a *"Session 23"* from a parallel session and two entries with the same
+> number in one log is a legibility defect in a record whose entire premise is that
+> claims must be checkable. Numbering dropped per `AGENTS.md` Convention 18 (cite date +
+> module). **Prose inside this entry still says "Session 22"** and refers to this same
+> entry — deliberately not swept, so the diff into a file with an incoming merge conflict
+> stays as small as possible. That is a recorded inconsistency, not a silent one.
 
 - **Instruction:** *"I am working on the M12 attestor read-only policy. The llm layer is
   only using mock data for it, because there have been changes"* — clarified to *"update
@@ -1412,5 +1421,55 @@ kept out of this file, per Session 19's precedent.
   is M2's, so fixing it here would be a two-owner edit (rule 2/§0.4). **It will not clear
   itself when the remaining modules land**, which is the part of "still unfinished" that
   does not hold — filed in `docs/test-suite.md` for its owner.
+- **Provenance of the baseline, found last and worth recording because the record was
+  missing it entirely.** The two-layer policy, `sandbox.py`, the fifth grant and the first
+  63 tests were **not** unlogged improvisation — they are commit **`9c7343d`**, authored
+  by `Aixxn <adrianazures6@gmail.com>`, merged as **PR #42** (head `M12-attestor`,
+  2026-09-27). `9c7343d` reached `main` as a *side effect* of PR #43 merging first: #43's
+  branch had `9c7343d` as its parent, so #43 pulled it in and #42 then merged with nothing
+  left to merge — which is why it is absent from main's first-parent chain and why two PRs
+  show one landing. So the debt recorded above is narrower than "nobody logged it": the
+  commit and PR exist, and only the **doc record** was never written. Session 22's entries
+  are the first and only record of it.
+- **Delivery: `936db35`, 8 files, 1003 insertions / 70 deletions, PR
+  [#48](https://github.com/baronocasiones/Intent-Gate/pull/48) OPEN** against `main` from
+  `m12-attestor-policy`, pushed with the explicit refspec
+  `git push -u origin m12-attestor-policy:m12-attestor-policy`. The PR body opens by
+  naming #42, because a reviewer who sees 314 test lines and no `assert_read_only` would
+  otherwise conclude the differentiator was never built. The merged `M12-attestor` ref was
+  **not** touched (`9c7343d`, verified still at that SHA after the push).
+- **The rebase onto `main` was attempted and ABORTED on conflict, and the branch is 1
+  behind.** `main` moved to `bf52608` (M14, #47) and both sides append to the same
+  session-log tails, so `docs/architecture.md` and `docs/test-suite.md` conflict
+  append-vs-append. The rebase was aborted rather than resolved, so `936db35` survives
+  byte-for-byte. **Resolution is "keep both entries"** and it belongs to whoever merges.
+- **A session-number collision, which is this log's problem and not the merger's:** `main`
+  now carries entries titled **"Session 22: M14 persistence"** and **"Session 23:
+  verification round archived"** from a parallel session. This entry is *also* Session 22.
+  The two are unrelated and both are real. Renumbering here would only trade a duplicate
+  label for a different lie about the sequence, so the collision is recorded instead —
+  **the numbering scheme is per-session-local and does not survive parallel work, and
+  someone should decide what replaces it before the next four sessions land.**
+- **Correction to a false claim that has been propagating across sessions.** Session 15
+  recorded *"no credential helper and no `gh` in this environment, so no PR exists yet and
+  write access for `Cody-me` is untested."* **All three parts are false.** `gh` **2.101.0
+  is installed** at `/home/cody-laptop/.local/bin/gh` and merely **not on `PATH`**, which
+  is why `which gh` failed and the absence was concluded. There *is* a credential helper —
+  it is URL-scoped, `credential.https://github.com.helper = !/home/cody-laptop/.local/bin/gh
+  auth git-credential`, so git authenticates without `gh` ever being on `PATH`. `gh auth
+  status` shows a live `repo`-scoped session for `Cody-me`. **Write access is now tested
+  and confirmed** (`git push --dry-run` exit 0, then a real push to `936db35`). The lesson
+  generalises past git: *a tool reported missing by a `which`-style probe may be present
+  and merely unpathed, and "we could not find it" is not the same claim as "it does not
+  exist."*
+- **One trap found in the local config, left in place and documented rather than silently
+  fixed:** `branch.m12-attestor-policy.merge` pointed at `refs/heads/main`, so `@{u}`
+  resolved to `origin/main`. A bare `git push` is actually **aborted** by git
+  (`push.default=simple` refuses when the upstream name differs, exit 128) rather than
+  silently hitting main — but git's own error message suggests `git push origin HEAD:main`,
+  which would, and anyone setting `push.default=upstream` turns it into a silent push to
+  main. `git push -u` with an explicit refspec fixed it, and that is the form recorded in
+  the module docstring's wiring instructions.
+
 
 

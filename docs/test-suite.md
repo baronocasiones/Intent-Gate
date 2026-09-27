@@ -571,7 +571,15 @@ executed this workflow.
   all four venvs from the file. The Known-gaps bullet above is closed; the §11.12
   guards stay open pending the ownership question, exactly as instructed.
 
-### 2026-09-27 — Session 22: M12 — declaration, observation, and the mechanism between them
+### 2026-09-27 — M12: declaration, observation, and the mechanism between them
+
+> **Heading relabelled, content untouched.** This entry was "Session 22" until the merge
+> that unblocked PR #48: `main` independently carries *"Session 22: M14 persistence guards"*
+> from a parallel session, and two entries sharing a number in one log is a legibility
+> defect in a record whose premise is that claims must be checkable. Numbering dropped per
+> `AGENTS.md` Convention 18 (cite date + module). **Prose inside this entry still says
+> "Session 22"** and means this same entry — deliberately not swept, to keep the diff small
+> in a file with an incoming merge conflict. A recorded inconsistency, not a silent one.
 
 - **Target:** `backend/tests/test_policy.py`, the guard `modules.md` §0.2 assigns to M12.
   **Code under test:** `attestor/policy.py` + `attestor/sandbox.py`. No other test file
@@ -618,7 +626,11 @@ executed this workflow.
   M7/M10 and M9, not a coverage gap, and the distinction is recorded in Known gaps above.
   The positive read-only-mount reading stays synthetic until M10 deploys a real D6 mount.
 
-### 2026-09-27 — Session 22 verification: 192 collected, 191 passed, guards proven
+### 2026-09-27 — M12 verification: 192 collected, 191 passed, guards proven
+
+> **Heading relabelled, content untouched** — see the note at the head of the preceding
+> M12 entry. This sub-entry was "Session 22 verification"; the number is gone for the same
+> reason and its prose still uses it to mean this session.
 
 - **Run as uid 1000, not root** — so all **21** `SKIP_AS_ROOT`-decorated cases executed
   rather than skipping. That matters: the 0555-directory and real-`EACCES` paths are the
@@ -668,5 +680,22 @@ executed this workflow.
 - **Not fixed, deliberately:** the one pre-existing failure. See the `Status:` block above —
   it is a missed guard flip in the M2 merge, in M3's file, and it will not resolve itself
   when other work finishes. **Filed here rather than left as a remembered red.**
+- **Delivery: `936db35`, PR [#48](https://github.com/baronocasiones/Intent-Gate/pull/48)
+  OPEN** from `m12-attestor-policy` against `main`. `test_policy.py` is 63 → **75** test
+  functions, a strict superset — `comm` against the merged baseline shows **12 added, 0
+  removed**, so nothing inherited was dropped.
+- **This file is the second of the two that block the merge.** `main` moved to `bf52608`
+  (M14, #47) and both sides append a session entry to this log's tail; the rebase was
+  attempted and **aborted** on append-vs-append, so `936db35` survives byte-for-byte.
+  Resolution is "keep both entries", and see the note in `architecture.md` for why that is
+  not purely mechanical: `main` already titles two of its entries *"Session 22"* and
+  *"Session 23"*, so this branch's *"Session 22"* collides with them and a keep-both merge
+  interleaves unrelated sessions out of date order. **A naming decision is owed, not just a
+  merge.**
+- **The count in the `Status:` block is the measured one, and it is worth restating its
+  composition** so the next reader does not have to re-derive it: 192 collected = 179 at the
+  `4b03c55` baseline **+ 12** from this session's `test_policy.py` **+ 1** from the M2
+  fixture merge, of which **1 is a pre-existing failure**. A bare count is how "118" went
+  stale twice in three sessions; the composition is what actually transfers.
 
 

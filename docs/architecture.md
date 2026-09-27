@@ -806,7 +806,16 @@ was correct throughout; the drift was entirely in prose. All ten are now correct
   pinning decision is **taken** — §11.14 above is marked CLOSED with the evidence. The
   §11.12 guards remain open per the instruction, owner still unassigned.
 
-### 2026-09-27 — Session 22: M12 — the attestor policy fits the architecture it is in
+### 2026-09-27 — M12: the attestor policy fits the architecture it is in
+
+> **Heading relabelled, content untouched.** This entry was "Session 22" until the merge
+> that unblocked PR #48: `main` independently carries *"Session 22: M14 persistence"* and
+> *"Session 23: verification round archived"*, and two entries sharing a number in one log
+> is a legibility defect in a record whose premise is that claims must be checkable.
+> Numbering dropped per `AGENTS.md` Convention 18 (cite date + module). **Prose inside this
+> entry still says "Session 22"** and means this same entry — deliberately not swept, to
+> keep the diff small in a file with an incoming merge conflict. A recorded inconsistency
+> rather than a silent one.
 
 - Instruction: *"I am working on the M12 attestor read-only policy. The llm layer is only
   using mock data for it, because there have been changes"*, clarified to *"update m12 to fit
@@ -888,5 +897,35 @@ was correct throughout; the drift was entirely in prose. All ten are now correct
   counted it. **Session 21's first harness reported 7/7 false kills for the same reason.**
   Only the control run exposed it, both times. Convention 7's control run is not
   ceremony — it is the only thing standing between this suite and a permanently green lie.
+- **Delivery: `936db35`, PR [#48](https://github.com/baronocasiones/Intent-Gate/pull/48)
+  OPEN** from `m12-attestor-policy` against `main`, 8 files, 1003 insertions / 70
+  deletions. Working tree clean, `HEAD` == `origin/m12-attestor-policy`, upstream set.
+- **This file is one of the two that block the merge, and that is structural.** `main`
+  moved to `bf52608` (M14, #47) and both sides append a session entry to this log's tail;
+  the rebase was attempted and **aborted** on append-vs-append, leaving `936db35`
+  byte-for-byte intact. **Resolution is "keep both entries"** — and the second half of that
+  is not a formality: `main` carries entries titled *"Session 22: M14 persistence"* and
+  *"Session 23: verification round archived"* while this branch's entry is *also* "Session
+  22", so a naive keep-both interleaves them out of date order and implies a sequence that
+  did not happen. **The session-numbering scheme does not survive parallel work and needs a
+  decision before the next few sessions land** — this is its third cost this month, after
+  the unlogged M12 landing and this conflict.
+- **Correction to a claim three sessions of logs have been repeating.** Session 15
+  recorded *"no credential helper and no `gh` in this environment, so no PR exists yet and
+  write access for `Cody-me` is untested."* **All three parts are false.** `gh` 2.101.0 is
+  installed at `/home/cody-laptop/.local/bin/gh` and only **not on `PATH`** — which is
+  exactly why `which gh` reported it missing and the absence was believed. A URL-scoped
+  helper exists (`credential.https://github.com.helper` → that absolute path), so git
+  authenticates without `gh` on `PATH` at all. **Write access for `Cody-me` is tested and
+  confirmed** — `git push --dry-run` exit 0, then PR #48 opened. Generalised, because it
+  will recur: *absence detected by a probe is not absence.* A `which`-style check proves
+  only that `PATH` failed to resolve it, and three sessions inferred "no gh" from that.
+- **Provenance of the M12 baseline, for the record:** commit `9c7343d` by `Aixxn
+  <adrianazures6@gmail.com>`, merged as PR #42 off `M12-attestor`, containing
+  `sandbox.py`, the fifth grant and 63 tests. It reached `main` as a *side effect* of #43
+  merging first (#43's branch had `9c7343d` as its parent), which is why it is absent from
+  main's first-parent chain and why two PRs show one landing. So `main` carries this
+  module's code with **no doc record of it anywhere** — the Session 22 entries in the three
+  files that own each concern are the first and only.
 
 
