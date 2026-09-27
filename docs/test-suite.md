@@ -254,3 +254,18 @@ executed this workflow.
   `PYTHONDONTWRITEBYTECODE=1 -p no:cacheprovider`. Validator: 6 OK lines + "OK 6/6
   schemas covered", exit 0. `git status --porcelain` shows only §2 files.
   3.14 is not the CI matrix — one CI run owed.
+
+### 2026-09-27 — Session 19: M13 harness guard
+
+- Extended `test_metric.py` with operator-by-operator transformation checks, criterion
+  contract/model validation, untouched input checks, seven-case ordering and counts,
+  valid/invalid emitted verdicts, runner exceptions, and the distinction between a
+  measured zero and an unmeasured null exposure. No live call is made.
+- Python 3.12.14, pinned dependencies in a temporary runtime: `pytest -q` with an
+  explicit temporary base produced **139 passed, 3 failed**. The three failures are in
+  `test_models_parity.py`: `Finding` exists in `contracts/findings.schema.json` but not
+  in the M3-owned model file. The failures predate this M13 change; they were not patched
+  from the test session. `python scripts/validate_contracts.py` passed, 6/6 pairs.
+- The first pytest attempt used this Windows sandbox's default temp folder and nine
+  `tmp_path` setups were denied; rerunning with an explicit temporary base resolved
+  those environment errors. No repo-root DB or artifact directory was created.

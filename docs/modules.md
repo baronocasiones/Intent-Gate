@@ -1166,3 +1166,20 @@ record that you did.
   under the rule it was creating. The coverage check caught it — which is the check
   working, not a near-miss. Recorded here because the mistake was in the specification, and
   the log should not read as though the first pass got it right.
+
+### 2026-09-27 — Session 19: M13 mutation harness seam (partial)
+
+- M13 now has an internal `MutationRequest` / `MutationCase` runner seam and provisional,
+  deterministic transformations for the seven `OPERATORS`. The transformations operate
+  on criterion text or `testable`; they are not the six M7 adversarial failure classes.
+- The runner is injected and receives a case containing the original criterion, mutated
+  criterion, operator, and optional context. All seven are preflighted before any runner
+  call. A complete, valid set of emitted run-level verdicts is required before exposure
+  is measured; any failure returns `measured: false`, a null rate, and zero counts.
+- D4 remains open. The provisional examples in `test_metric.py` establish mechanics,
+  not evidence that a real spec violation exists. Before M10 supplies a production
+  adapter across the module boundary, M1 must contract the mutation input envelope under
+  §0.3 rule 1; M2 must supply genuine corpus data under its owned `fixtures/` path.
+- M13 remains **incomplete** until the actual M9/M10/M14 pipeline reruns and persists all
+  seven cases with ground truth. M15 then serves the stored exposure. No M1/M2/M9/M10/
+  M14/M15-owned file was edited in this slice; Stryker corroboration stays D5 stretch.

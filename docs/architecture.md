@@ -524,3 +524,23 @@ was correct throughout; the drift was entirely in prose. All ten are now correct
   property that made the figure trustworthy — that every line is generated and auditable.
   Recorded as §11 gap 11 (slot 10 reserved for PR #26's receipt gap, so nothing renumbers
   on merge).
+
+### 2026-09-27 — Session 19: M13 mutation harness seam (partial module)
+
+- Added `backend/app/metrics/mutation_harness.py`: all seven settled M13 operators now
+  have deterministic provisional criterion transformations. Each case validates through
+  `Criterion`, preserves the caller's input, and fails when its target is absent.
+- The harness accepts an injected runner instead of importing the pipeline. It preflights
+  all seven cases, records the emitted run-level verdict for each, and calls the existing
+  `false_certified_rate()` only after every run succeeds. Invalid/missing verdicts,
+  inconsistent exit codes, or runner failures return the honest unmeasured exposure.
+- **Not a production measurement:** no code calls the harness from the app yet. The six
+  gates and persistence path remain stubs/unwired (§11.1–3). D4 must establish a real
+  acceptance-criteria corpus and ground truth; M9/M10/M14 must supply the real runner
+  and storage before a benchmark result can be published.
+- No endpoint, schema, fixture, dependency, Figure 6 count, or existing stage shape
+  changed. The existing exposure schema already has a validator pair (6/6).
+- Local Python 3.12.14 verification: contract validator passed (6/6); full suite had
+  139 passed and 3 failures. All three are the pre-existing M3 parity failure caused by
+  `contracts/findings.schema.json` declaring `Finding` without a corresponding model in
+  `backend/app/models/schemas.py`. M3 owns that file; M13 did not alter it.
