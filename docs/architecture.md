@@ -198,7 +198,16 @@ wired yet.
 4. `watsonx_client.complete` is `NotImplementedError` past the key check — the integration pattern is now researched and specified in `docs/watsonx-integration.md`, but **no code has been written**.
 5. `assert_read_only` had no production caller. **Narrowed by Session 20 (M12), then the worker-startup half CLOSED by R1 (`a7178d2`, D-g):** M12 made the primitive real — the capability set comes from the worker's own `ATTESTOR_CAPS` declaration instead of a self-comparison, and `sandbox.py` adds a real read-only proof (§8.1); R1 then gave it its caller — `worker()` vets `resolve_worker_caps` + `assert_read_only` at startup, before consuming (`policy.py` untouched). Still owed: the `attestor_policy` key in the emitted record (M9's), and the workspace-probing `enforce_worker_read_only`, which transfers to the first workspace-reading stage — no workspace exists yet (D4 open).
 6. ~~§2 `_dist` path defect~~ **CLOSED 2026-09-27 (M15/R2, `ab2849c`):** two-level climb, `mount_dashboard()` extracted and proven to mount (and to no-op when `dist` is absent).
-7. Missing vs spec: GitHub write-back (comments + check runs), review-debt ledger, risk-weighted exposure decay curve, signed cross-file hash chain, SSE/polling, auth, real demo-repo target.
+7. Missing vs spec: GitHub write-back (comments + check runs), review-debt ledger, risk-weighted exposure decay curve, signed cross-file hash chain, SSE/polling, auth, real demo-repo target. **Sharpened 2026-09-27 (Session 25 verification round):** "real demo-repo target" is no longer a line item, it is the reason two other gaps bite. Measured: M4 resolves `fixtures/demo_payload.json`'s `diff_paths: ["src/refund.py"]` to
+    `{'path': 'src/refund.py', 'sha256': None, 'status': 'unreached', 'note': 'unstatable: ENOENT'}`
+    — which is **M4 behaving exactly as its AC demands** ("never a silent empty string — an
+    unmeasured claim must look unmeasured"). The consequence is that the demo's evidence
+    locations `src/refund.py:64` and `src/refund.py:88` point into a file that does not exist,
+    and they come from M7's hardcoded §1.7 findings. So the ladder is adjudicated from an
+    assertion, the location resolves to nothing, and — per §11.18 — nothing in the artefact
+    says so. A ~30-line `src/refund.py` with a genuinely absent retry path at line 88 would
+    make M4's digest real, the mock locations true, and the demo defensible in one move.
+    Owner: M2 (payload) + whoever owns the demo repo.
 8. Dependencies pinned in `backend/requirements.txt`: fastapi 0.135.3, uvicorn 0.44.0, pydantic 2.13.0, httpx 0.28.1, jsonschema 4.26.0, pytest 9.0.3, pytest-asyncio 1.4.0. Smoke tests in `backend/tests/test_scaffold.py` (pipeline stub path, policy guard, metric-empty) are the only coverage.
 9. **Dual-mode: the switch is built, the wiring is not** (found 2026-09-27 while reconciling Figure 6 — previously unrecorded). **Narrowed by Session 21, not closed.** `llm/__init__.py::select_client()` now reads `MOCK_LLM` and returns the right client, and a guard walks `backend/app` to prove nothing reaches a client except the switch — so `modules.md` rule 4 and AGENTS.md Convention 4 now have a selector to point at. **But no stage calls it:** M5 and M7b are both unbuilt, so `mock_client` remains unreachable from product code and the demo-survival rule still survives by accident rather than by design. Owner: **M5** (first consumer), then M7b. The remaining half is not a missing line but a missing *test on the consumer*: the durable control is M5 asserting which client it got, not the selector existing. See §7. *(M4-ingest merge: this supersedes the pre-merge item 9, "Dual-mode is not wired" — the switch landed on the branch.)*
 10. **The pydantic mirrors have zero product callers** (found 2026-09-27, Session 18). As of that session `app.models.schemas` is imported by `test_models_parity.py` and `test_schemas_contracts.py` and by **nothing else** — no gate, router, orchestrator or metric module uses it. M3 completed (5/5 parity, 100 tests green) but is not yet load-bearing; the models become real only when M4–M9 and M13/M15 construct and consume them. Related: the strictness added in Session 18 makes two paths that do not exist yet — reading a `write_artifact` envelope into `RunRecord` (`sha256` is not a contract key) and validating M9's record (a superset of `run.schema.json`) — require key projection first. Both are recorded in `modules.md` §M3 as M9/M14 obligations.
@@ -271,6 +280,54 @@ wired yet.
     ownership (`modules.md` §0.4), so this session neither fixed nor silenced it
     (rule 8, Convention 6). M14 verified *around* it: 39/39 M14 tests green on
     3.11.9 + 3.12.14, validator exit 0 on both. Owners: M2 + M3.
+    **CLOSED 2026-09-27 (Session 25, `M4-ingest` merge `27ec711`):** the branch's flipped
+    cross-check replaced the `E0` expectation, so the suite is green and this entry no longer
+    describes the tree. It is left in place as history — the point of the entry was that the
+    tree was red, and that was true when written.
+
+18. **M7's provenance label does not reach the artefact an auditor reads** (found 2026-09-27,
+    Session 25 verification round, read-only — not fixed). `gates/verify.py` emits
+    `mode: "mock"` and `tokens_spent: 0` alongside its findings, and the chain threads stage
+    output **verbatim** (`_chain` is `value = fn(value)`), so the question is only what the
+    later stages carry forward. Measured by walking the keys: `verify` →
+    `[criteria, findings, mode, ok, stage, tokens_spent]`; `adjudicate` →
+    `[criteria, ok, stage, verdict, verdicts]`; the emitted artefact →
+    `[exit_code, exposure, measured, ok, prev_digest, sha256, stage, status, traceability,
+    verdict, verdicts]`. **M8 drops `findings`, `mode` and `tokens_spent`.** Neither the
+    artefact on disk nor `GET /api/runs/{id}` carries any statement that no probe ran. The
+    only guard is `test_gates.py::test_verify_mock_mode_is_labelled`, which calls the stage
+    directly and so cannot see the drop. This is the §11.17 pattern one layer up — a
+    provenance claim that is not in force for the thing it is claimed to protect — and it
+    lands on the product's central promise (Convention 5: verdicts carry the evidence tier and
+    the locations examined). **Consequence for the demo:** a judge who asks "were these
+    findings observed?" gets no answer from the artefact. Owner: **M8/M9** (thread it) and
+    **M18** (state it in the runbook); `modules.md` §M7's own AC asks for provenance "in the
+    runbook", which does not exist yet. Two false claims corrected in place — see the
+    bracketed notes on this session's entry.
+
+19. **The dashboard cannot render a live run, so "never built" understates it** (found
+    2026-09-27, Session 25 verification round, read-only — not fixed). Every record to date
+    describes the frontend as *unbuilt*, which is true (`node_modules/` and `dist/` are both
+    absent) but reads as "needs `npm install` and a build". Reading the source shows two
+    defects that survive a successful build:
+    - `App.jsx` calls `fetchRun('demo')` — a **hard-coded run id that cannot exist**. The
+      detail route 404s an unknown id, so `fetchRun` returns `null`, `setLive(false)` never
+      runs, and the component holds its fixture forever. The Phase 3 exit criterion in
+      `refactor-plan.md` §5 — *"live render … no fixture-mode banner"* — therefore **cannot
+      pass** without threading a real run id. This also makes the recorded
+      `VerdictBadge` defect precise: `<VerdictBadge verdict={run.status} />` passes the
+      lowercase lifecycle string (`"rejected"`), while the badge compares `'CERTIFIED'` /
+      `'REJECTED'` in uppercase, so it renders **orange = undecided** for every possible
+      outcome. The component is fine; the prop is wrong.
+    - The fixture fallback is not a smaller version of the truth, it is the **weakest**
+      version: `frontend/src/fixtures.js` holds one verdict, `AC-1 PENDING @ E0`, rationale
+      `'stub'`, against the canonical fixture's two (`AC-1 CERTIFIED@E4`, `AC-2 REJECTED@E2`).
+      If the live fetch fails mid-demo the screen silently shows a *different, weaker*
+      result, with `(fixture mode)` as the only tell.
+    Owner: **M16**. Note for that owner: `frontend/public/fixtures/demo_run.json` is
+    **byte-pinned** to `fixtures/demo_run.json` by two guards in `test_schemas_contracts.py`,
+    so the plan's "delete `fixtures.js`, read `public/`" is right about the former and must
+    keep the latter (or flip a guard in the same change, rule 7).
 
 ## 12. Monorepo layout (as on disk)
 
@@ -988,4 +1045,21 @@ was correct throughout; the drift was entirely in prose. All ten are now correct
 - **Integration closed (Role 3's remaining job).** Every lane branch is now contained in `refactor` **except** `origin/bob/m13-mutation-harness` — 2 commits, dropped by decision D-a (the mutation harness is not part of this architecture; it was never on `main`, so §9, `exposure.schema.json` and the `/api/metrics` stub are unaffected). The M10 lane's record merged as a **fast-forward** (that lane had rebased onto the tip); the M15/M18 work arrived twice — as `2048e7c` in a linked worktree and as `ab2849c` on the branch — and the two are **byte-identical trees**, so nothing was owed. The M4-ingest branch merged into `main` as `27ec711` and `refactor` was reset onto it.
 - **Suite state at `ac9e816`:** 18 test files, **400 passed / 0 failed on 3.11.9 and 3.12.14**, validator **6/6 exit 0** both legs, repo tree clean (the E2E ran with `DATABASE_URL` and `ARTIFACT_DIR` pointed at `/tmp`, so no `attestation.db` or `artifacts/` was written into the tree).
 - **Not built, and named here so the demo does not claim it:** M7's real probes (the chain runs on the mock findings stub — `mode: "mock"`, `tokens_spent: 0`, which is *visible provenance*, not a hidden fallback), a live watsonx.ai call, `/api/metrics` (still a hard-coded stub), GitHub write-back, the review-debt ledger, the cross-file hash chain (`prev_digest` stays `null` — D15), and the **React build** (`npm install` has never run, so `mount_dashboard`'s fixed `_dist` path is asserted by unit test but never exercised against a real `frontend/dist`).
+  > **[CORRECTED 2026-09-27, Session 25 verification round — the "visible provenance" half is wrong.]** `mode: "mock"` and `tokens_spent: 0` are emitted by `gates/verify.py` and are **not visible in the artefact**: the chain threads stage output verbatim and M8 does not carry `findings`/`mode`/`tokens_spent` forward, so neither the artefact nor `GET /api/runs/{id}` states that no probe ran. The label is visible *in M7's stage dict only*, and the single guard that asserts it (`test_gates.py`) calls the stage directly, so it cannot see the drop. See **§11.18**. The original wording is kept above as history; the rest of the bullet stands.
 - **`refactor` is unpushed and unverifiable against the remote:** no network to origin on this machine (`git fetch` fails, SSH publickey denied), so `origin/refactor`'s tip cannot be reconciled from here. Push when the network allows; if it is rejected as non-fast-forward, fetch + merge + re-run the 400/400 gate before shipping.
+
+### 2026-09-27 — Session 25 (verification round, read-only): branch integrity confirmed, two demo-blocking gaps found
+- **Instruction:** *"verify if all of the modules touched in this branch is intact and is ready for the demo."* **Read-only: no product code, contract, fixture, dependency, or endpoint was changed.** `refactor` @ `f5ca93b`, tree clean before and after.
+- **Integrity — no caveats.** Pins re-checked before the run (Session 21's rule that an interpreter swap is not a test run until the pins are re-installed): both venvs are exact clean installs, `pip install --dry-run` resolves nothing new, `pip check` clean, `starlette==1.7.0` and `rpds-py==2026.6.3` as pinned. **400 passed / 0 failed on 3.11.9 AND 3.12.14; validator `OK 6/6` exit 0 on both legs.** Convention 6 audit: **zero** skip/xfail markers, **zero** deleted test files, **zero** renames, **zero** `pytest.raises` removed, test functions **192 → 330**. All **8** removed assertions were audited individually and every one is a documented stub-flip (5 gate stub shapes, 2 echo-the-stub API asserts, the nested `out["record"]` access M9's flattening removed) — rule 7 honoured, nothing weakened.
+- **Guards proven lethal, 8/8, zero survivors** (`/tmp/opencode/demo_guard_harness.py`, throwaway copies only, control run green *first*): the M9 re-nest regression is caught by **both** `test_emit.py::test_emit_output_is_readable_by_the_committed_consumers` **and** `test_api.py::test_api_run_detail_executed_run_serves_row_plus_artifact` — the two-consumer pin is real. Also killed: M8's E4 floor (`test_adjudicate_supported_below_e4_is_conditional`), M8's E2 refutation cap (the demo-pair test), M9's `exit_code` derivation, M9's fail-closed guard, M10's success transition, M15's 404, and the demo payload's `action` field.
+- **The control run earned its keep, and taught us something about M16.** The first harness copy omitted `frontend/` and failed 2 guards — a *harness* artifact, not a product defect. What it exposed: **`frontend/public/fixtures/demo_run.json` is byte-pinned to the canonical fixture** by two guards in `test_schemas_contracts.py`, so §M16's "delete `fixtures.js`, read `public/`" is right about the former and must keep the latter.
+- **Demo readiness — the backend spine is green.** Cold E2E re-run end to end: `status: rejected`, AC-1 `CERTIFIED@E4` at `src/refund.py:64`, AC-2 `REJECTED@E2` at `src/refund.py:88`, CLI exit 1, artifact written, 404 on an unknown id, server log empty. `attest.py --direct` runs in-process with no server, no network, and leaves no state. **It also runs with no environment configuration at all** — no `.env`, no `MOCK_LLM`, no credentials — which is the strongest survival result available, and it holds because *no stage calls an LLM* (§11.9) rather than because a switch is wired. All five endpoints respond. The Bob-CLI path works from a foreign CWD with an absolute payload path; the relative form fails **closed** with a clear message and exit 1.
+- **Two new gaps, neither fixed** — **§11.18** (M7's `mode: "mock"` is dropped by M8 and reaches neither the artefact nor the API, so the demo's central honesty claim is undisclosed) and **§11.19** (the dashboard calls `fetchRun('demo')`, an id that cannot exist, so it can never render a live run; the `VerdictBadge` defect is the prop, not the component). **§11.7** sharpened: the missing demo repo is why the demo's evidence locations resolve to nothing. **Two false claims corrected in place**, originals preserved — the `mode: "mock"` "in the artifact" line in this file's own previous entry and the matching one in `refactor-plan.md` §5. That is the §11.17 pattern (naming a control not in force for the thing it protects) landing on the product's central promise; it is the **fourth** documented instance of a record in this repo being wrong about the code.
+- **Doc drift found, recorded not fixed** (rule 10 — module briefs are not edited for verification findings): `modules.md` §M4 shows **0/4** ACs ticked and still describes ingest as returning `{stage, ok, input_keys}`, which `architecture.md` §3 contradicts; §11.15 carried no `CLOSED` marker (now added, verified from source); §1's runtime diagram still says `enqueue_run` returns "in-memory id only today", closed by R1.
+- **API endpoints:** none defined, changed, or removed — all five exercised read-only. **Dependencies added:** none.
+- **New conventions/patterns:**
+  1. **A guard can be pinned to a file that another guard pins too, and that redundancy is the point.** The M9 seam is caught by a unit guard *and* a serving guard; either alone would have left a hole, and the reason is that they assert against different consumers.
+  2. **"Never built" and "cannot work once built" are different findings, and the records conflated them.** Every prior entry described the frontend as unbuilt, which invited the reading that `npm install` closes it. Reading the source found two defects a successful build cannot fix.
+  3. **An honest negative is not the same as a positive one.** M4 recording `unreached: ENOENT` is the AC working; the demo problem is that nothing downstream is honest *about the finding being an assertion*, which is a different gap in a different module.
+  4. **Prove the demo under the configuration the demo will actually use.** Running with *no* env vars found a stronger property than any configured run could, and it is a property about which stages import the LLM — measurable statically, and worth measuring whenever a stage is added.
+- **Open at archive:** §11.18 and §11.19 unfixed (M8/M9, M16); the demo repo still missing (§11.7) — it is the cheapest single move to a defensible demo; M18's runbook still owed and still the gate on Phases 4–5, with the measured caveat that `MOCK_LLM=true` is **inert** and the runbook must not imply otherwise; CI's validator step still lacks `if: always()` (inert while green, one line); list-vs-detail `status` divergence re-confirmed and still demo-neutral (`api.js` has no list fetch). `refactor` remains **unpushed** — `git fetch` still fails on this machine, `FETCH_HEAD` is 0 bytes, every remote-tracking ref is stale, so the remote tip remains unverifiable and a pull is impossible from here.
