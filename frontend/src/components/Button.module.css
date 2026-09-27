@@ -1,0 +1,55 @@
+/* Button.module.css — controls: 8px radius, uppercase label, tactile press */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s2);
+  border: none;
+  border-radius: var(--r-ctl);
+  font-family: var(--font-body);
+  font-size: var(--fs-meta);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease),
+    transform var(--dur-fast) var(--ease);
+}
+.btn:active:not(:disabled) { transform: translateY(1px); }
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* sizes */
+.md { padding: 13px 20px; }
+.sm { padding: 8px 14px; font-size: var(--fs-label); }
+
+/* primary — the accent */
+.primary {
+  background: var(--violet);
+  color: var(--text-inverse);
+}
+.primary:hover:not(:disabled) { background: var(--violet-hover); }
+
+/* secondary — outlined on paper */
+.secondary {
+  background: var(--bg-surface);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+}
+.secondary:hover:not(:disabled) {
+  background: var(--bg-sunken);
+  border-color: var(--text-muted);
+}
+
+/* danger */
+.danger {
+  background: var(--danger);
+  color: var(--text-inverse);
+}
+.danger:hover:not(:disabled) { background: var(--danger-hover); }

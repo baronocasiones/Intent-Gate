@@ -1,0 +1,77 @@
+.page { padding: var(--page-pad); display: flex; flex-direction: column; gap: var(--s4); max-width: 1200px; }
+.skeleton { background: var(--bg-sunken); border-radius: var(--r-card); width: 100%; }
+
+.pageHeader { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--s4); flex-wrap: wrap; }
+.title { font-family: var(--font-display); font-size: var(--fs-display); font-weight: 700; letter-spacing: var(--track-display); line-height: var(--lh-display); text-wrap: balance; }
+.filters { display: flex; gap: var(--s2); flex-wrap: wrap; }
+.filterSelect { padding: 8px 12px; border: 1px solid var(--border-strong); border-radius: var(--r-ctl); font-family: inherit; font-size: var(--fs-meta); color: var(--text); background: var(--bg-surface); }
+.filterSelect:focus-visible { outline: 2px solid var(--violet); outline-offset: 2px; border-color: var(--violet); }
+
+@media (max-width: 640px) {
+  .opRow { grid-template-columns: 1fr auto; row-gap: var(--s1); }
+  .opTrack { grid-column: 1 / -1; order: 3; }
+  .opPct { order: 2; }
+  .opPctMuted { grid-column: 1 / -1; order: 4; }
+  .opLink { display: none; }  /* unreachable in the static preview; label would only add noise */
+  .detailsSummary { padding: var(--s3); }
+  .opTable { display: block; overflow-x: auto; }
+}
+
+/* Focal stat */
+.statCard { background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--r-card); padding: var(--s5); display: flex; flex-direction: column; gap: var(--s2); align-items: flex-start; }
+.statNum { font-family: var(--font-display); font-size: var(--fs-stat); font-weight: 700; line-height: 1; color: var(--text); font-variant-numeric: tabular-nums; text-wrap: balance; }
+.unmeasured { color: var(--text-muted); font-style: italic; }
+.statCaption { font-size: var(--fs-meta); color: var(--text-soft); max-width: 480px; }
+
+/* Card */
+.card { background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--r-card); padding: var(--s4); display: flex; flex-direction: column; gap: var(--s2); }
+
+/* Trend chart */
+.trendSvg { width: 100%; height: auto; display: block; }
+.trendLabels { display: flex; justify-content: space-between; padding: 0 var(--s1); }
+.trendLabel { font-size: var(--fs-label); color: var(--text-muted); }
+.trendNote { font-size: var(--fs-label); color: var(--text-muted); font-style: italic; }
+
+/* Capability breakdown */
+.opList { display: flex; flex-direction: column; gap: var(--s3); }
+.opRow { display: grid; grid-template-columns: 1fr 2fr auto auto; align-items: center; gap: var(--s3); }
+.opLabel { font-size: var(--fs-meta); font-weight: 500; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.opTrack { height: 6px; background: var(--border); border-radius: var(--r-pill); overflow: hidden; }
+.opFill { height: 100%; background: var(--violet); border-radius: var(--r-pill); }
+.opPct { font-size: var(--fs-meta); color: var(--text-soft); white-space: nowrap; text-align: right; font-variant-numeric: tabular-nums; }
+.opPctMuted { font-size: var(--fs-meta); color: var(--text-muted); grid-column: 2 / 4; font-variant-numeric: tabular-nums; }
+.opLink {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  font-size: var(--fs-meta);
+  color: var(--violet);
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.opLink:not(:disabled):hover { text-decoration: underline; }
+.opLink:disabled { cursor: default; color: var(--text-soft); }
+
+/* Details disclosure */
+.details { border: 1px solid var(--border); border-radius: var(--r-row); overflow: hidden; }
+.detailsSummary { padding: var(--s3) var(--s4); cursor: pointer; background: var(--bg-sunken); list-style: none; }
+.detailsSummary::-webkit-details-marker { display: none; }
+.opTable { width: 100%; border-collapse: collapse; padding: var(--s3); }
+.opTable th { padding: var(--s2) var(--s3); text-align: left; border-bottom: 1px solid var(--border); }
+.opTableRow td { padding: var(--s2) var(--s3); font-size: var(--fs-meta); border-bottom: 1px solid var(--border); }
+.opTableRow:last-child td { border-bottom: none; }
+
+/* Focal stat reads as one wide instrument line: label / big number / caption */
+@media (min-width: 760px) {
+  .statCard { 
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    column-gap: var(--s5);
+    align-items: end;
+    row-gap: var(--s2);
+  }
+  .statCard > :first-child { grid-column: 1 / -1; }
+  .statCaption { max-width: 46ch; align-self: end; }
+}

@@ -148,9 +148,9 @@ wired yet.
 ## 10. Contracts, fixtures, validator, frontend
 
 - **Contracts** (`contracts/*.schema.json`, draft-07): `criterion` (`criterion_id, text, testable`), `verdict` (verdict enum + E0–E6 tier + `locations[]` + `rationale`), `run` (`run_id, status, verdicts[], measured`), `traceability` (`run_id, links[{criterion_id, locations[], evidence_tier}]`), `exposure` (`false_certified_rate, measured, by_operator`), `findings` (`criterion_id, probe enum[5], result, location, note`). **6 schemas.** `run` → `verdict` via `$ref`.
-- **Fixtures** (`fixtures/`): `demo_run.json` (run `demo`, `PENDING`, `measured: false`, AC-1/AC-2 E0 stubs), `demo_traceability.json` (matching links). These **are the frontend's API** until backends land.
+- **Fixtures** (`fixtures/`): `demo_run.json` (run `demo`, status `rejected`, `measured: false`, AC-1 `CERTIFIED`/E4 + AC-2 `REJECTED`/E2), `demo_traceability.json` (matching links), `demo_exposure.json` (`false_certified_rate: 0.25`, `measured: true`, all 7 operators). These **are the frontend's canonical source** until backends land.
 - **Validator** (`scripts/validate_contracts.py`): validates **6 pairs** (`run↔fixtures/demo_run.json`, `traceability↔fixtures/demo_traceability.json`, `verdict↔contracts/examples/verdict.json`, `criterion↔contracts/examples/criterion.json`, `exposure↔contracts/examples/exposure.json`, `findings↔contracts/examples/findings.json`) with `$ref` store resolution, plus a **coverage check** (`uncovered_schemas()`) that fails if any schema on disk has no pair — Convention 3 is now enforced, not just documented. The reported count is derived from the schemas on disk, not from `len(PAIRS)`, so a duplicate entry cannot overstate coverage. stdlib + `jsonschema` only.
-- **Frontend** (`frontend/`, React 18 + Vite 6): `App.jsx` fetches live (`api.js: fetchRun/fetchMetrics`, graceful `null` on failure) then falls back to `fixtures.js` (mirrors `demo_run.json`); banner shows `(fixture mode)` when not live. Four components: `VerdictBadge` (green/red/orange), `EvidenceLadder` (E0–E6 counts), `TraceabilityMatrix` (criterion/verdict/tier/locations table), `ExposureCard` (rate or `unmeasured`, measured/fixture tag). Dev proxy (`vite.config.js`) forwards `/api` + `/webhooks` to `127.0.0.1:8000`. Production serving is via FastAPI static mount (subject to the §2 path defect).
+- **Frontend** (`frontend/`, React 18 + Vite 6, **M16 — Phase A complete**): full dashboard built static-first. All nine screens implemented (S0 Verification Runs · S1 Repository Settings · S3 Confirm Requirements · S4 Verifying · S5 Results · S6 Override modal · S7 Record · S8 Exposure · S9 Audit History). Single data seam: `src/data/index.js` exports `getRuns/getRun/getTraceability/getExposure/getProgress/getSource`; Phase A reads `src/data/static/*.json` (seeded from canonical fixtures); no screen calls `fetch` or imports `api.js`. Design tokens in `src/styles/tokens.css` (exact §3.2 values). In-house hash router (`src/router.js`, decision F1). CSS Modules + tokens (decision F2). `src/domain/verdicts.js` is the single home for status/verdict/tier → label + pill; case normalised there (fixes `VerdictBadge` lowercase bug). `src/fixtures.js` deleted (three-copy divergence resolved, M2 request 1). Exposure reads `0.25` from fixture (M2 request 2). Persistent `STATIC PREVIEW · backend API not final` banner on every route. Dev toggle in `src/data/scenarios.js` (`default` · `empty` · `zero-criteria` · `many-locations` · `in-progress` · `unmeasured`). `npm run build` exits 0. **Phase B (live API wiring) is BLOCKED pending the backend team declaring the API final.** Dev proxy in `vite.config.js` is inert until then.
 
 ## 11. Gaps (honest list — what "stub" actually means)
 
@@ -246,8 +246,14 @@ backend/app/store/artifacts.py
 backend/tests/test_scaffold.py
 contracts/*.schema.json  contracts/examples/*.json
 fixtures/demo_*.json  scripts/validate_contracts.py
-frontend/src/{App.jsx,main.jsx,api.js,fixtures.js,components/*}
+frontend/src/{App.jsx,App.module.css,main.jsx,router.js,api.js}   ← api.js retired (no screen imports it)
+frontend/src/styles/tokens.css
+frontend/src/domain/verdicts.js
+frontend/src/data/{index.js,scenarios.js,static/{demo_run,demo_traceability,demo_exposure,runs,progress}.json}
+frontend/src/components/{Badge,Button,DataSourceBanner,EmptyState,Modal,Sidebar,TopBar}.{jsx,module.css}
+frontend/src/screens/{RunsList,SetupVerification,ConfirmRequirements,Verifying,RunDetail,Record,Exposure,AuditHistory}.{jsx,module.css}
 frontend/{index.html,package.json,vite.config.js}
+frontend/public/fixtures/{demo_run,demo_traceability,demo_exposure}.json   ← canonical mirrors (M2 owns source)
 ```
 
 ## Session log (append-only)
@@ -755,3 +761,48 @@ was correct throughout; the drift was entirely in prose. All ten are now correct
 - **Follow-up the same day (user instruction: §11.14 now, §11.12 when unblocked):** the
   pinning decision is **taken** — §11.14 above is marked CLOSED with the evidence. The
   §11.12 guards remain open per the instruction, owner still unassigned.
+
+### M16 Phase A — Static-first dashboard built (Prompts 0–11)
+
+**Build:** `npm install && npm run build` both exit 0. Versions locked: react@18.3.1, react-dom@18.3.1, vite@6.4.3, @vitejs/plugin-react@4.7.0. Zero new runtime dependencies added (decisions F1 and F2 taken at recommended defaults).
+
+**What landed:**
+- `src/styles/tokens.css` — all §3.2 design tokens, exact values from brief.
+- `src/domain/verdicts.js` — single home for status/verdict/tier → label + pill. **Normalises case here** — fixes the `VerdictBadge` lowercase-`rejected` → orange bug (§6 defect 1).
+- `src/router.js` — in-house hash router, ~40 lines, zero deps (decision F1).
+- `src/data/index.js` — the seam. Exports `getRuns / getRun / getTraceability / getExposure / getProgress / getSource`. Phase A reads `src/data/static/*.json`. No screen may call `fetch` or import `api.js`.
+- `src/data/scenarios.js` — dev toggle: `default · empty · zero-criteria · many-locations · in-progress · unmeasured`.
+- `src/data/static/` — five files: `demo_run.json`, `demo_traceability.json`, `demo_exposure.json` (copied byte-for-byte from canonical `fixtures/`); `runs.json` and `progress.json` (Phase A origins, labelled as demo content).
+- `src/fixtures.js` **deleted** — three-copy divergence resolved (M2 request 1).
+- `ExposureCard` (now `screens/Exposure.jsx`) reads `0.25` from `demo_exposure.json` via the seam (M2 request 2). `null` rate renders as `unmeasured` in italic/muted at display size — never as `0%`.
+- Nine screens implemented against their Figma references: S0 `RunsList`, S1 `SetupVerification`, S3 `ConfirmRequirements`, S4 `Verifying`, S5 `RunDetail`, S6 Override `Modal`, S7 `Record`, S8 `Exposure`, S9 `AuditHistory`.
+- Shell (`App.jsx`): sidebar + topbar + `DataSourceBanner` (persistent `STATIC PREVIEW · backend API not final` on every route, every hash change). Smart `RunScreen` wrapper routes `/runs/:id` to `Verifying` when `status=running`, to `RunDetail` otherwise.
+- `src/api.js` retired — still on disk (it is the future Phase B implementation stub) but no screen or component imports it. Grep confirms zero references in `src/screens/` and `src/components/`.
+
+**Defects fixed:**
+1. `VerdictBadge` case bug — normalised in `domain/verdicts.js`; all callers use `resolveStatus` / `resolveVerdict`.
+2. `src/fixtures.js` three-copy divergence — deleted; static data seeded from canonical fixtures.
+3. `ExposureCard` always showing `null` rate — now reads `0.25` from `demo_exposure.json` via `getExposure()`.
+4. `npm install` / `npm run build` had never been run — both now exit 0.
+
+**Phase A states exercised by hand:**
+- `default` — runs list (3 rows), `/runs/demo` (MERGE BLOCKED, AC-1 Certified E4, AC-2 Rejected E2), `/exposure` (25%), `/runs/demo/record` (traceability table + export JSON downloads), `/audit` (3 rows, period + chip filters).
+- `empty` — runs list shows empty state component.
+- `zero-criteria` — Confirm Requirements shows "No requirements found" empty state.
+- `many-locations` — RunDetail shows 8 locations, wrapping not overflowing.
+- `in-progress` — `/runs/demo` routes to Verifying screen (RUNNING bar, progress, log panel).
+- `unmeasured` — Exposure shows `unmeasured` in muted italic at display size; `0%` never appears.
+
+**Honesty checks passed:**
+- `measured:false` → `unmeasured`, never `0%` or `0.0`.
+- `STATIC PREVIEW · backend API not final` banner present and persistent on all routes.
+- No `CERTIFIED` badge at `E0` (`domain/verdicts.js` + `RunDetail` gate both enforce this).
+- `exit_code` absent or `1` → Blocked; default state is always blocked/pending.
+
+**Decisions taken (recommended defaults):**
+- F1: In-house hash router (not `react-router-dom`).
+- F2: CSS Modules + `tokens.css` (not Tailwind).
+
+**Phase B status: BLOCKED.** The backend team has not declared the API final. `src/data/index.js` is the only file that knows about static vs. live. Phase B is a single-file change to that module — no screen feels it. The `STATIC PREVIEW` banner becomes the `fixture mode` / `API unavailable` indicator in Phase B; the mechanism is already built.
+
+**Backend defect reported (not patched — one writer per file):** `backend/app/main.py` resolves `frontend/dist` by climbing three levels instead of two (§2, §11.6), so FastAPI never mounts the built dashboard. Owner: M15. Verified: `npm run build` produces `frontend/dist/`; the path defect remains.

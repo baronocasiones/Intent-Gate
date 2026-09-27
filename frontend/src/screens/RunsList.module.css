@@ -1,0 +1,241 @@
+/* RunsList.module.css — S0 */
+.page {
+  padding: var(--page-pad);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+}
+
+/* ---------- page header ---------- */
+.header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--s3);
+  flex-wrap: wrap;
+}
+
+.title {
+  font-family: var(--font-display);
+  font-size: var(--fs-display);
+  font-weight: 700;
+  letter-spacing: var(--track-display);
+  line-height: var(--lh-display);
+  color: var(--text);
+  text-wrap: balance;
+}
+
+/* ---------- filters ---------- */
+.filters {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--s3);
+  flex-wrap: wrap;
+}
+
+.searchWrap {
+  position: relative;
+  flex: 1;
+  min-width: 200px;
+}
+
+.searchIcon {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  pointer-events: none;
+}
+
+.searchInput {
+  width: 100%;
+  padding: 10px 12px 10px 36px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-ctl);
+  font-family: inherit;
+  font-size: var(--fs-meta);
+  color: var(--text);
+  background: var(--bg-surface);
+  transition: border-color var(--dur-fast) var(--ease);
+}
+.searchInput::placeholder { color: var(--text-muted); }
+.searchInput:hover { border-color: var(--text-muted); }
+.searchInput:focus-visible {
+  outline: 2px solid var(--violet);
+  outline-offset: 2px;
+  border-color: var(--violet);
+}
+
+.selectWrap {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.filterLabel { display: flex; }
+
+.filterSelect {
+  padding: 10px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-ctl);
+  font-family: inherit;
+  font-size: var(--fs-meta);
+  color: var(--text);
+  background: var(--bg-surface);
+  cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease);
+}
+.filterSelect:hover { border-color: var(--text-muted); }
+.filterSelect:focus-visible {
+  outline: 2px solid var(--violet);
+  outline-offset: 2px;
+  border-color: var(--violet);
+}
+
+/* ---------- table ---------- */
+.tableWrap {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  overflow: hidden;
+}
+
+.colHeaders {
+  display: grid;
+  grid-template-columns: 2.6fr 1.7fr 0.9fr 1.1fr 1.1fr 1.5fr 0.9fr;
+  gap: var(--s3);
+  padding: 10px var(--s4);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-sunken);
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 2.6fr 1.7fr 0.9fr 1.1fr 1.1fr 1.5fr 0.9fr;
+  gap: var(--s3);
+  align-items: center;
+  padding: 14px var(--s4);
+  border-bottom: 1px solid var(--border);
+  transition: background var(--dur-fast) var(--ease);
+}
+.row:last-child { border-bottom: none; }
+.row:hover { background: var(--bg-sunken); }
+
+.prCell {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prLink {
+  color: var(--text);
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 14px;
+  letter-spacing: -0.01em;
+}
+.prLink:hover { color: var(--violet); }
+
+.repoCell {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  color: var(--text-soft);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.commitCell { display: flex; align-items: center; min-width: 0; }
+
+.mono {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-soft);
+  background: var(--bg-sunken);
+  padding: 2px 6px;
+  border-radius: var(--r-logo);
+}
+
+.dateCell {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.actionCell { display: flex; justify-content: flex-end; }
+
+.viewLink {
+  font-size: var(--fs-meta);
+  font-weight: 600;
+  color: var(--violet);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.viewLink:hover { text-decoration: underline; }
+
+/* ---------- skeleton ---------- */
+.skeletonList {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.skeletonRow {
+  display: flex;
+  gap: var(--s3);
+  align-items: center;
+  padding: 14px var(--s4);
+  border-bottom: 1px solid var(--border);
+}
+.skeletonRow:last-child { border-bottom: none; }
+
+.skeletonCell {
+  height: 14px;
+  background: var(--bg-sunken);
+  border-radius: var(--r-logo);
+  animation: shimmer 1.4s ease-in-out infinite;
+}
+
+@keyframes shimmer {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+/* ---------- responsive ---------- */
+@media (max-width: 780px) {
+  /* Table becomes a stack of cards — headers leave the a11y tree with display:none */
+  .colHeaders { display: none; }
+
+  .row {
+    grid-template-columns: auto 1fr;
+    grid-template-areas:
+      "pr     pr"
+      "repo   commit"
+      "status gate"
+      "date   date";
+    gap: var(--s2) var(--s3);
+    padding: var(--s3);
+    align-items: center;
+  }
+  .prCell       { grid-area: pr; white-space: normal; }
+  .repoCell     { grid-area: repo; }
+  .commitCell   { grid-area: commit; justify-self: end; }
+  .statusCell   { grid-area: status; }
+  .gateCell     { grid-area: gate; justify-self: end; }
+  .dateCell     { grid-area: date; justify-self: end; }
+  /* the PR title already links to the run — a second link would be a duplicate CTA */
+  .actionCell   { display: none; }
+
+  .skeletonRow { flex-wrap: wrap; }
+  .skeletonRow .skeletonCell:nth-child(n+4) { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeletonCell { animation: none; }
+}
