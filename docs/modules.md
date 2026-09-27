@@ -1609,3 +1609,5 @@ kept out of this file, per Session 19's precedent.
   fully-pinned venv; contract validator 6/6 exit 0; live uvicorn smoke of the whole
   webhook → queue → worker → artifact → runs → metrics path.
 - Decisions still open: D1–D13, D15 unchanged by this session.
+
+- **M15/M10 delivery state (2026-09-27, end of session):** both PRs are open and review-ready — **#53** (`m17-policy-windows`, the Windows test-only fix) and **#54** (`api-surface`: the core slice, the loop wiring, the M14-alignment rewire recorded above, and the §11.15 close). #54's Linux CI is green on both legs; #53's red is `main`'s parity red, documented on the PR, and #54 already contains #53's history so merge order does not matter. `api-surface` has absorbed `main` (`aca1631`, Static Frontend #52) in `640f8a9` and stands 0 behind / 9 ahead. Integration merges remain baron's (§0.4). **Unchanged by all of this:** the M14 helper contracts, the D9 status set (with its one recorded `pending` deviation), the five documented routes, and the open decision set — D1–D13, D15, with HMAC (D7) and GitHub write-back (D13) deferred by the confirmed scope and `npm install` still unrun.
