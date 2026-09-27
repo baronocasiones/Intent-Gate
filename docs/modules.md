@@ -1316,6 +1316,46 @@ kept out of this file, per Session 19's precedent.
   still pins no transitive dependency, so **no leg of this verification is reproducible**
   until M17 decides on pins or a lockfile.
 
+### 2026-09-27 — Session 24: refactor plan — module decisions (no code change)
+- **Plan-mode session, zero code/contract/fixture/dependency changes.** Trigger: LabLab Admin
+  made the **Bob IDE a showcase requirement for judging eligibility** ~5h before submission;
+  all developers paused; $40 Bob credits on join remove the coin blocker. The decisions below
+  change module scope or ownership — owners fold them into their briefs when they land
+  (rule 10 records findings in `architecture.md`; these are *decisions*, logged at their source).
+- **M13 — the mutation harness is OUT of the current architecture (user decision).**
+  `origin/bob/m13-mutation-harness` (GiGi, 2 commits) is unpruned dead work and will be
+  **deleted**; the harness acceptance criteria in §M13 are superseded for this build.
+  **What stays as-coded:** `metrics/false_certified.py` + its tests, `exposure.schema.json`
+  + validator pair, and the honest `measured: false` stub on `/api/metrics` (never remove a
+  shape tests and the coverage check depend on — presentation is the cheap fix, removal is
+  not). Consequence: the false-certified rate **cannot be measured in this build**; the demo
+  shows no number at all rather than a synthetic one.
+- **M16 — scope change:** **hide `<ExposureCard>` for the demo** (frontend-only; this
+  supersedes M2's request #2 to feed it `demo_exposure.json` for now). Rest of M16 unchanged:
+  `npm install`/`npm run build` at Phase 0, the `VerdictBadge` lowercase-`status` defect,
+  triple-fixture cleanup, and proof that the matrix renders **live** (no fixture-mode banner).
+- **M18 — scope change:** the runbook gains the **Bob integration**: new `scripts/attest.py`,
+  **HTTP mode** (POST `/webhooks/github` → poll `GET /api/runs/{id}` → print verdict +
+  traceability → exit with the run's `exit_code`; `--direct` in-process fallback), plus
+  `fixtures/demo_payload.json` holding the §1.7 body. HTTP mode is deliberate — it dodges §6's
+  CWD-relative SQLite trap. Bob's demo moment is **invoke only** (one command-tool call, no
+  live code authoring mid-demo).
+- **Ownership / build assignments (one writer per file, §0.4 honored):**
+  - **Role 1 → Cody:** M10 + M15 (R1 loop wiring, R2 serve + `main.py` `_dist` fix; the
+    stub-test flips are in scope and must land in the same commits — rule 7).
+  - **Role 2 → Aixxn:** merge their own **`M4-ingest`** (45-min timebox; fallback =
+    cherry-pick `b1689c3` `select_client` + `6c69c04` D1 ratification, then stub-passthrough
+    ingest), **§11.15** fix inside that merge, M3-file conflicts resolved (main's Finding
+    mirror wins; docs keep both — Session 20 pattern).
+  - **Role 3 → baron:** R4 thin slice on **M5/M8/M9** — real extract parsing, real
+    adjudicate ladder per §1.4 (D1), derived `exit_code` per §1.5; parse/verify stay
+    stub-shaped with mock-backed §1.7 findings (Convention 4, provenance in the runbook).
+    Plus integration merges of every green lane.
+  - **Role 4 → GiGi:** M18 deliverables above (freed by the harness drop).
+  - **Role 5 → FE dev:** M16 scope as changed.
+- **§1.7 is the demo contract** for R4's target outputs. Budget: **3h build / 2h rehearsal**
+  (authorized deviation from Convention 6's nominal final-4h). D1 rides the `M4-ingest` merge;
+  no contract changes are planned, so the validator stays 6/6 throughout.
 ### 2026-09-27 — M12: fits the current architecture (A + B + C)
 
 > **Heading relabelled, content untouched.** This entry was "Session 22" until the merge
