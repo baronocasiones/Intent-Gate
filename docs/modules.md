@@ -831,27 +831,45 @@ per the refactor plan, full brief below marked accordingly)**
 **Purpose:** own run lifecycle — mint the id, execute the six stages, persist the
 result, and (once wired) run off the request path. **Code:**
 `backend/app/orchestrator/pipeline.py` (`enqueue_run`, `run_pipeline`) and
-`jobs.py` (`submit`, `worker`). **Today:** `run_pipeline` chains the six stages
-synchronously and is the only exercised path; `enqueue_run` mints `run-{8 hex}` and
-returns; `jobs.submit` enqueues but **nothing ever starts `worker()`** (a characterized
-gap, pinned by two tests in `test_pipeline.py`).
+`jobs.py` (`submit`, `worker`), plus `orchestrator/persistence.py` (the M14-call
+glue — conn lifecycle + transitions, zero SQL) and `main.py`'s lifespan (R1-held
+this session). **Today (landed R1, `a7178d2`):** `enqueue_run` mints the id,
+persists a `queued` row and submits the work item; `run_pipeline(payload,
+run_id=None)` stays pure without an id and persists (`running` → `pending` /
+`failed` + artifact) with one; `worker()` runs items via `to_thread` under the
+read-only capability check and the lifespan starts/stops it cooperatively. The
+§11.1 unwired-queue gap is closed — both characterization tests flipped
+same-change.
 
 **Target interface:** `enqueue_run(payload) -> str` persists a `queued` row and submits
 to the queue; `run_pipeline(payload) -> dict` remains the synchronous path (tests and
 the injected-payload demo depend on it); `worker()` is started once at app startup.
 
 **Acceptance criteria**
-- [ ] **Wire the queue:** `enqueue_run` persists and submits; `worker()` starts from the
-      app lifespan in `main.py` (**M15 owns that file** — request the change, do not
-      edit it). Until then `GET /api/runs` has nothing to list.
-- [ ] `run_pipeline` writes the `runs` row and calls `write_artifact` (**M14**) and flips
-      the stored `status` — today nothing is persisted anywhere (M14's functions have
-      zero callers).
-- [ ] A stage that raises must not lose the run: catch per stage, store the failure, and
-      leave the run in a blocking state (rule 6). A crash must never read as CERTIFIED.
-- [ ] Flip `test_worker_is_async_but_never_started_by_app` **in the same change** (rule 7).
-- [ ] The module-level `_queue` stays clean between tests — the existing suite drains it
-      manually and depends on that.
+- [x] **Wire the queue:** `enqueue_run` persists and submits; `worker()` starts from the
+      app lifespan in `main.py` — landed R1 (`a7178d2`; Role 1 held M15's file this
+      session per the refactor plan, `_dist` untouched). `GET /api/runs` has rows to
+      list; serving them is R2's.
+- [x] `run_pipeline` writes the `runs` row and calls `write_artifact` (**M14**) and flips
+      the stored `status` — row creation is `enqueue_run`'s (AC1; M14's `save_run`
+      raises on duplicates so `run_pipeline` cannot re-insert), transitions +
+      artifact are `run_pipeline`'s. M14's zero-caller halves are closed.
+- [x] A stage that raises must not lose the run: catch per stage, store the failure, and
+      leave the run in a blocking state (rule 6). Blocking record
+      `{run_id, stage, ok: False, exit_code: 1, error}` is defined inline (add-only
+      if M9's `run.schema` ever governs it); detail lives in the artifact — the
+      `runs` table has no `error` column by M14's design.
+- [x] Flip `test_worker_is_async_but_never_started_by_app` **in the same change** (rule 7).
+      Flipped to `test_worker_is_started_by_app_lifespan` (dynamic: `with
+      TestClient` proves start + cooperative stop); `test_jobs_submit…` rewritten
+      for the `(run_id, payload)` shape in the same commit.
+- [x] The module-level `_queue` stays clean between tests — new
+      `backend/tests/conftest.py` autouse fixture (module-attr redirect to `tmp_path`
+      + sync drain before/after); the manual drains are retired. M17 owns adoption.
+- **Tick convention used here** (Session 19 left this project-wide question open): tick
+  the module's own deliverable and file downstream wiring as a request — hence AC1
+  ticks with serving noted as R2's, while §M14 AC1 (written-by-M10 *and* read-by-M15)
+  stays unticked with the write half annotated.
 
 **Size:** S. **Needs:** M9, M14. **Risk:** low effort, high unblock value — this is what
 makes the API and dashboard show real data.
@@ -1002,7 +1020,7 @@ mirrors). **Today:** the seams exist and are guarded (40 tests); **no product
 caller yet** — M10/M15 wire them.
 
 **Acceptance criteria**
-- [ ] `runs` rows are written by M10 and read by M15. `artifact_path` points at the JSON. **M14's half is done** (`save_run`/`set_status`/`get_run`/`list_runs` + the artifact path); the callers are pending.
+- [ ] `runs` rows are written by M10 and read by M15. `artifact_path` points at the JSON. **M14's half is done** (`save_run`/`set_status`/`get_run`/`list_runs` + the artifact path); the callers are pending. **Write half landed R1 (`a7178d2`)** — M10 persists rows + artifacts through `orchestrator/persistence.py`; read half (`get_run`/`list_runs` from routers) is R2's, checkbox stays open until then.
 - [x] `created_at` is an ISO-8601 **string** (`now_iso`, UTC tz-aware; type pinned by `test_save_run_created_at_is_iso8601_string` — landed once, here, not in M17).
 - [x] The artifact `sha256` continues to cover the sorted body exactly as today (`test_store_db.py` pins it, plus the store-keys-win negative). `prev_digest` rides alongside as a PROPOSED, UNCONTRACTED D8 seam (D15) with a self-invalidating guard. Cross-file chaining stays M9's.
 - [x] `ARTIFACT_DIR` and `DATABASE_URL` are env-driven (`DATABASE_URL` now has a reader — `_sqlite_path` strips `sqlite:///`; `config.py` untouched); tests keep using `tmp_path` so the repo tree stays clean (`docs/test-suite.md` Convention 3). **Known limitation, accepted:** both defaults are CWD-relative (recorded in `docs/architecture.md` §6).
@@ -1168,8 +1186,15 @@ record that you did.
 | **D11** | Per-run token/cost ceiling | M7, M11 | Hard cap per criterion group; report spend per run. **Data source now known:** every watsonx.ai response carries `usage.{prompt_tokens, completion_tokens, total_tokens}`, so only the policy is open. See `docs/watsonx-integration.md` §5 |
 | **D12** | M7 demo scope if the clock slips | M7, M18 | 1 criterion group, 2 probes, mock-first |
 | **D13** | GitHub write-back (comment + check run) | M15 | Stretch — after the API serves real data |
+| **D14** | `--disable-subagents` vs the granted `subagent` cap — which launch posture the workers take | M7 | **OPEN. Keep GRANTS as-is.** The tension is real on both sides: Bob Shell subagents are "model-invoked and non-deterministic" (`ibm-bob.txt`, Stage 4), which motivates a `--disable-subagents` launch — but option (b) fan-out *is* subagents (each M7b worker calls watsonx.ai itself; `policy.py` documents why `subagent` is granted), so disabling it removes the mechanism the architecture prescribes. Determinism should come from deterministic probes, not from removing the capability the fan-out depends on. (Known wording tension kept-as-is since Session 7; `architecture.md` §8.) |
 | **D15** | The emitted artefact envelope, review-debt ledger, ingest bundle, and `ast` have no contract. This blocks M9 (emitter), M14 (artifact store), and the receipt renderer's consumer wiring. The `criteria[]` and `findings[]` array wrappers are also uncontracted (the item schemas exist; the array envelopes do not). | M9, M14, M1 (next pass) | **OPEN — and now specified (Session 21).** M1 owns `contracts/` alone, so this is a formal request, not something M9 may invent. What M9 needs, in the order it needs it: (1) an **artefact envelope** — `run_id`, `status`, `measured`, `verdicts[]`, plus `traceability`, `ledger`, `exposure`, `attestor_policy`, `signed`, `exit_code`; (2) a **review-debt ledger** — one entry per `CONDITIONAL` criterion (D3 makes an unrecorded conditional a contract violation, so the shape is load-bearing, not cosmetic); (3) the **ingest bundle** — `requirement` + `files[]` where each entry must distinguish *measured* from *unreached and why* (never a silent empty string); (4) the **`ast`** entry shape. Two hard constraints on the answer: **M3's models are `extra="forbid"`**, so M9's record cannot be loaded into `RunRecord` unprojected — `schemas.py` says so at lines 17–24 — and `write_artifact` prepends `sha256`, so the reverse projection is needed too. Recommended default stands (**hold; do not invent a shape without a real emitter to validate against**) — but the emitter now exists in draft, so the request is answerable rather than hypothetical |
 | **D16** | **Two verdict vocabularies in two keys, and the dashboard renders the wrong one.** M8's run-level `verdict` is **uppercase** (`REJECTED` — it is the `verdict` enum). `run.schema.json` carries **no aggregate verdict field at all**; the only run-level key is `status`, which D9 makes **lowercase** (`rejected`). `App.jsx:23` passes `run.status` into `<VerdictBadge>`, and `VerdictBadge.jsx:2` compares it against the **uppercase** enum — so a D9-conformant `"rejected"` matches neither branch and renders **orange**, the `PENDING` colour. A perfectly correct M9 record would make the demo's rejected run look undecided. | M8, M9, M15, M16, and M1 (a contract) | **OPEN. Do not paper over it in one module.** Three owners, one question: does `run` gain an aggregate `verdict` field (uppercase enum, alongside `status` as the lifecycle), or does `status` change case, or does `VerdictBadge` grow its own mapping? M1 owns the contract, M15 owns the router, M16 owns the component. Recommend the first — a lifecycle (`queued`→`running`→`rejected`) and a verdict (`REJECTED`) are different concepts and forcing one key to carry both is what produced the orange badge. **Until it is decided, M8 must emit `verdict` and must not assume anything about `status`**, and any artefact showing a tier or verdict must label the vocabulary's provenance per §1.4 |
+
+
+| **D17** | What spawns the N Stage-4 OS processes, now that `bob run` is gone | M7 | **OPEN. Stdlib only (rule 9).** The source prescribes "N independent `bob run` processes ourselves" (`ibm-bob.txt`, Stage 4) — and Sessions 8–10 removed `bob run` from the architecture entirely (no Bob custom-mode syntax, no harness runs), so the spawner is unspecified. Recommended: `asyncio` subprocesses owned by M7b itself; M10's pool stays 1 (D-f) and is not the fan-out. |
+| **D18** | M10 worker contract — the shape R2/M17/M18 build against | M15, M17, M18 | **ANSWERED by R1 (`a7178d2`, this lane).** Work item `{"run_id", "payload"}`; `submit(run_id, payload)`; pool of one; items run via `asyncio.to_thread`; launch-site `ATTESTOR_CAPS` default = the five GRANTS tokens, vetted by `resolve_worker_caps` + `assert_read_only` at worker startup (D-g; `policy.py` untouched); cooperative shutdown = stop event + `None` sentinel (lifespan cancels nothing). Pure path `run_pipeline(payload)` persists nothing — M18's `--direct` depends on it. |
+| **D19** | What a "criterion group" is — the unit M7 fans out over | M7, M8 | **OPEN. Recommended: one group per criterion (`criterion_id`).** The source says "one per criterion group" (`ibm-bob.txt`, Stage 4) and never defines the grouping; per-criterion matches M6's criterion-anchored `ast[]` and R4's per-criterion findings. M7 decides; M8 aggregates whatever M7 groups. |
+> **D16** was reserved here for Role 2's verdict-vocabulary question and has since been **filled by the M4-ingest merge** (the VerdictBadge row above) — no collision; numbering reads D13–D19 contiguously.
 
 ---
 
@@ -1615,3 +1640,48 @@ kept out of this file, per Session 19's precedent.
   located caps at E2 (§1.8.4's silent cell; demo-anchored); (2) M5's brief dual-mode
   ACs are superseded by deterministic extraction (D-c/D-f) — the no-import test is
   the §11-gap-9 consumer control.
+
+### 2026-09-27 — M10 lane (R1): loop wired, both §11.1 tests flipped (`a7178d2`)
+- **Executed the refactor plan's R1 on an isolated worktree** (`/tmp/opencode/m10-lane`,
+  branch `m10-orchestrator` off `refactor` @ `7f65009`): Role 2's `M4-ingest` merge was
+  found **in progress on `main`** (MERGE_HEAD `c229861`, five UU paths — exactly the
+  dry-run's five; files touched minutes before execution started), so the lane never
+  touched `main`. None of the merge's files overlap M10's (`pipeline.py`, `jobs.py`,
+  `main.py`, `test_pipeline.py`, new `persistence.py`/`conftest.py` untouched there).
+- **Shipped (single atomic commit, rule 7):** `enqueue_run` persists + submits;
+  `run_pipeline(payload, run_id=None)` pure without id, persisting with one
+  (`running` → `pending`/`failed` + artifact; row-missing skips stages but still
+  writes the blocking artifact); `worker(queue, stop)` vets caps at startup,
+  `to_thread`s items, stops on event + `None` sentinel; `main.py` lifespan starts/stops
+  it (R1-held; `_dist` untouched); `persistence.py` wraps `db` helpers only (no SQL,
+  no `commit()`); `conftest.py` redirects db + artifacts to `tmp_path` and drains the
+  queue (M17 to adopt). **Both §11.1 tests flipped same-commit** (submit-shape rewrite
+  + dynamic lifespan flip via `with TestClient`); 6 → 16 tests in `test_pipeline.py`.
+- **Guard proof (`/tmp/opencode/m10-guard-proof.py`, Session 21 rules): 8/8 killed,
+  0 survivors** — rowcount bypass, catch removal, insert drop, caps-check drop (hang-kill,
+  rc=124 — the check's absence is catastrophic, which is why it exists), shape drop,
+  rowcount-force-true, lifespan unwire, conftest removal (ordering pollution breaks the
+  submit guard). Restore verified byte-identical; tree clean.
+- **§6: filed D14/D17/D18/D19; D16 deliberately skipped** — it lived on Role 2's
+  `M4-ingest` branch (verdict vocabularies) and a second D16 would have collided at
+  integration, so the reservation was noted in-table. **The reservation has since been
+  filled:** the M4 merge landed D16 as predicted and the table now reads D13–D19
+  contiguously. D18 (worker contract) is answered by this lane. Tick convention stated
+  in §M10 (Session 19's open question: tick the module's own deliverable, file
+  downstream as request).
+- **Landing + integration verification (second pass of this entry):** the behavior
+  commit `a7178d2` reached `refactor` early via `932ca68`; this docs commit was
+  stranded and lands now by rebasing onto `refactor` (Session-20 keep-both — M4's
+  Sessions 19/20 and Session 25's record preserved above; §11.5 merged with M12's
+  narrowing instead of overwriting it). **Chain tests re-run against Role 2's real
+  `ingest`: 349 passed, 0 failed on 3.11.9 AND 3.12.14 at the verified tip
+  (`1b5be27`), validator 6/6 both legs, tree clean** — §11.15 closed on this branch
+  via `0cac970` (M3's Finding-mirror line), not this lane. Scope note: Session 25's
+  `399` includes the main checkout's in-flight R4 files; `349` is the committed tree
+  at the verified SHA.
+- **Still open:** lane branch unpushed (push for Phase-2 integration); `test_api.py`'s
+  three stub flips + `_dist` + serving are R2's; `refactor` moved twice during this
+  verification (`1b5be27`, `ba6eec0`) — re-run the suite if it moves again before
+  merge. **Re-verified at `2048e7c` after R4/R2 landed (`c073dbe`, `2048e7c`): 399
+  passed, 0 failed both legs, validator 6/6, tree clean — all 16 guards green against
+  the real chain.**

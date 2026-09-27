@@ -49,6 +49,24 @@ green in the same runs. Guards mutation-proven: 9/9 behavioural kills (Session 2
 rules: control green, killing test named) + both no-LLM-import AST guards proven
 lethal; harness at `/tmp/opencode/r4_mutation_harness.py` (outside the repo).
 
+**M10 (2026-09-27, R1, `a7178d2`):** `test_pipeline.py` 6 → 16 tests — both §11.1
+characterizations flipped in the same commit (rule 7), 10 new guards (persist,
+transitions, blocking failure, row-missing, redirect, submit shape, launch caps,
+poison-refusal, sentinel processing, preset stop, lifespan start/stop). New
+`backend/tests/conftest.py` autouse fixture redirects db + artifacts to `tmp_path`
+(Convention 2 — consumer module, never env) and drains `jobs._queue` before/after
+every test (M17 owns adoption). All 8 new guards mutation-proven lethal
+(`/tmp/opencode/m10-guard-proof.py`, 0 survivors, restore byte-identical).
+Targeted files green on 3.12.14 at landing; **integration proof executed** on
+`refactor` @ `1b5be27`: **349 passed, 0 failed on 3.11.9 AND 3.12.14**, validator
+`OK 6/6` exit 0 both legs, tree clean, no pollution. 349 = Session 25's 339 (post-M4,
+pre-lane) **+ this lane's 10**. Session 25's architecture entry records `399` for the
+same verification window — that count includes the main checkout's in-flight R4 files;
+`349` is the committed tree at the verified SHA. §11.15 is closed (`0cac970`,
+M3's Finding-mirror line) and green inside the 349. **The current committed count is
+the 399 above** — R4/R2 landed as `c073dbe` + `2048e7c` after this paragraph was
+written, and this rebase re-verified it: 399 passed both legs, validator 6/6.
+
 ## Layout
 
 ```
@@ -57,9 +75,11 @@ pyproject.toml                     pytest config only (not an installable packag
 backend/requirements.txt           runtime + test deps (pytest 9.0.3, pytest-asyncio 1.4.0)
 backend/tests/
   __init__.py                      makes pytest put backend/ on sys.path (imports are `app.*`)
+  conftest.py                      autouse: tmp_path redirect for db+artifacts, jobs._queue drain (M17 adopts)
   test_scaffold.py                 Session-11 smoke tests (pipeline, policy, metric-empty)
   test_gates.py                    §3 stage stubs: shapes, stage order, exit_code=1 blocks
-  test_pipeline.py                 §1/§4 chaining, run-id format, §11.1 unwired-queue characterization
+  test_pipeline.py                 §1/§4 chain + persist/submit/worker/lifespan (R1), run-id format, both §11.1 tests flipped
+  test_ingest.py                    M4 real Stage-1 ingest guard (102 tests — Session 25's Layout entry was missed here; added with the M10 lane's Status recompute)
   test_policy.py                   §8 attestor GRANTS/DENIES exact sets, fail-closed both ways
                                    — Session 20: 9 → 63 tests. Adds the declaration resolver,
                                    the worker-startup gate, the workspace read-only proof
@@ -89,7 +109,7 @@ needs network access, a database file, or watsonx.ai credentials.
 
 | § | Concern | Test file |
 |---|---|---|
-| §1/§4 | runtime shape, data flow, pipeline chain | `test_pipeline.py` |
+| §1/§4 | runtime shape, data flow, pipeline chain + persist/submit/worker/lifespan (R1) | `test_pipeline.py` (+ `conftest.py` isolation) |
 | §3 | six gates, schemas, config, LLM clients, metric, policy | `test_gates.py`, `test_schemas_contracts.py`, `test_models_parity.py`, `test_config.py`, `test_llm.py`, `test_metric.py`, `test_policy.py` |
 | §5 | API surface (health, webhook, runs, metrics) | `test_api.py` |
 | §6 | persistence (SQLite WAL, hash-sha256 artifacts) | `test_store_db.py`, `test_store_records.py` |
@@ -97,7 +117,7 @@ needs network access, a database file, or watsonx.ai credentials.
 | §8 | read-only attestor (the differentiator) | `test_policy.py` |
 | §9 | false-certified-rate metric (the "THE NUMBER") | `test_metric.py` |
 | §10 | contracts (6 schemas), fixtures (2), validator (6 pairs + coverage check) | `test_schemas_contracts.py` |
-| §11 | honest gaps — characterized, not hidden | `test_pipeline.py` (queue), `test_llm.py` (spike pending) |
+| §11 | honest gaps — characterized, not hidden | `test_pipeline.py` (queue wired R1: §11.1 closed, §11.2/§11.5 callers landed), `test_llm.py` (spike pending) |
 
 Figure 6 (`docs/Figure-6-System-Architecture.png`) is the visual cross-check:
 the attestor box ↔ `test_policy.py`, the metering note ↔ `test_llm.py` /
@@ -656,3 +676,33 @@ failure** on both legs (the failure re-proven pre-existing on parent
 - **Status recomputed above (399/399 both legs).** Mutation battery 11/11 lethal
   (Session 21 rules); the two AST import guards were proven separately by
   inserting `import app.llm` into throwaway copies — both fire.
+
+### 2026-09-27 — M10 lane (R1): persist/submit/worker/lifespan guards (`a7178d2`)
+- **Scope:** `test_pipeline.py` 6 → 16 tests + new `backend/tests/conftest.py`
+  (autouse; the file the suite was missing — `enqueue_run` now persists and every
+  webhook test writes rows, so without the redirect + drain the suite pollutes the
+  repo tree and `test_jobs_submit` fails on ordering alone).
+- **Flips (rule 7, same commit as the behavior):** `test_jobs_submit…` rewritten for
+  the `(run_id, payload)` work-item shape; `test_worker_is_async_but_never_started_by_app`
+  rewritten as `test_worker_is_started_by_app_lifespan` — dynamic proof via `with
+  TestClient(app)` (task alive inside, done + not cancelled after exit), which is safe
+  only because bare `TestClient(app)` (as in `test_api.py:10`) never runs lifespan.
+- **New guards:** persist-queued-row, pure-path-writes-nothing, full
+  `queued→running→pending` transition with artifact file, stage-raise blocking record
+  (exact dict pinned), row-missing skips-stages-but-still-blocks (artifact durable,
+  row stays absent), redirect-is-active (`tmp_path` in both bindings), launch-caps ==
+  GRANTS with startup-path acceptance, poisoned-caps refusal before consuming
+  (`qsize` untouched), sentinel processing to `pending`, preset-stop consumes nothing.
+- **Proof:** targeted files green on 3.12.14 (`test_pipeline` 16/16; api/scaffold/
+  config/store/policy 124/124); guard harness `/tmp/opencode/m10-guard-proof.py`
+  under Session-21 rules (control green, per-test ids) — **8/8 killed, 0 survivors**,
+  restore byte-identical, no `attestation.db`/`artifacts/` pollution (`git status`
+  shows only the 6 lane files). **Full both-legs proof executed at integration
+  (second pass):** on `refactor` @ `1b5be27` — **349 passed, 0 failed on 3.11.9 and
+  3.12.14**, validator `OK 6/6` exit 0 both legs, tree clean, no pollution. §11.15 was
+  fixed elsewhere (`0cac970`, M3's Finding-mirror line) and is included green in the
+  349; the earlier `expect 221 → 220 + §11.15` estimate predates M4/M12/M2/S25's
+  landed tests. Scope: Session 25's `399` includes the main checkout's in-flight R4
+  files; `349` is the committed tree at the verified SHA. **Re-verified at `2048e7c`
+  after R4/R2 committed those files: 399 passed, 0 failed both legs, validator 6/6,
+  tree clean.**

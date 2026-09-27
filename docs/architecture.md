@@ -97,7 +97,7 @@ at `/` **only if that directory exists** (API-first otherwise).
 ## 4. Data flow (as coded)
 
 1. `POST /webhooks/github` receives any JSON payload (real GitHub event or hand-injected demo body — same path, tunnel-independent).
-2. `enqueue_run(payload)` returns `run-{uuid4[:8]}`. Nothing is persisted, nothing is queued.
+2. `enqueue_run(payload)` mints `run-{uuid4[:8]}`, persists a `queued` row and submits `{"run_id", "payload"}` to the queue (R1). `run_pipeline(payload, run_id)` marks `running`, threads the stages, writes the artifact and flips `pending`/`failed`.
 3. When `run_pipeline(payload)` is invoked (tests only, today), each gate's `run()` passes its stub dict to the next: payload → bundle → criteria → ast → findings → verdict → record.
 4. Terminal stub output today: `{"stage": "emit", "ok": True, "exit_code": 1, "record": {"stage": "adjudicate", ...}}` — exit 1 = blocked, which is the safe default for a gate.
 5. Intended (not yet coded): persist `runs` row + `write_artifact()` hash-chained JSON, serve via `/api/runs*`, aggregate metric via `/api/metrics`.
@@ -107,7 +107,7 @@ at `/` **only if that directory exists** (API-first otherwise).
 | Method + path | Router | Today | Spec target |
 |---|---|---|---|
 | `GET /health` | `main.py` | live `{"ok": true, ...}` | same |
-| `POST /webhooks/github` | `routers/webhooks.py` | live (id mint, no persistence) | + HMAC check, persist run, submit to queue, GitHub check-run write-back |
+| `POST /webhooks/github` | `routers/webhooks.py` | live (id mint, persists `queued` row, submits to queue) | + HMAC check, GitHub check-run write-back |
 | `GET /api/runs` | `routers/runs.py` | stub `{"runs": []}` (`TODO: query SQLite`) | list from `runs` table |
 | `GET /api/runs/{run_id}` | `routers/runs.py` | stub `{"run_id", "pending"}` (`TODO: load from store`) | run + artifact pointers |
 | `GET /api/metrics` | `routers/metrics.py` | stub `{false_certified_rate: None, measured: False, by_operator: {}}` (`TODO: aggregate`) | aggregate `false_certified_rate()` over mutation runs |
@@ -179,11 +179,11 @@ wired yet.
 
 ## 11. Gaps (honest list — what "stub" actually means)
 
-1. `enqueue_run` never persists, never submits to `jobs` queue; `worker()` never started.
-2. `GET /api/runs*` and `GET /api/metrics` return hard-coded stubs; `db.get_db` / `write_artifact` have no callers.
+1. `enqueue_run` never persists, never submits to `jobs` queue; `worker()` never started. **CLOSED 2026-09-27 (M10 lane, R1, `a7178d2`):** `enqueue_run` persists a `queued` row and submits the work item; `worker()` runs items via `to_thread` and starts/stops from the `main.py` lifespan. Both characterization tests flipped in the same change (rule 7).
+2. `GET /api/runs*` and `GET /api/metrics` return hard-coded stubs; **half-closed R1 (`a7178d2`):** `db.get_db` / `write_artifact` now have callers (M10's `persistence.py` + `run_pipeline`) — the endpoint stubs remain, and serving real rows is R2's.
 3. Gates return shape-correct stubs with empty payloads (`criteria: []`, `ast: []`, `findings: []`, `verdict: PENDING`).
 4. `watsonx_client.complete` is `NotImplementedError` past the key check — the integration pattern is now researched and specified in `docs/watsonx-integration.md`, but **no code has been written**.
-5. `assert_read_only` is test-only; pipeline never calls it. **Narrowed by Session 20 (M12), not closed:** the primitive now exists and takes its capability set from the worker's own declaration instead of a self-comparison, and `sandbox.py` adds a real read-only proof. Still zero callers — the worker-startup call is M7/M10's, the `attestor_policy` key in the emitted record is M9's. See §8.1.
+5. `assert_read_only` had no production caller. **Narrowed by Session 20 (M12), then the worker-startup half CLOSED by R1 (`a7178d2`, D-g):** M12 made the primitive real — the capability set comes from the worker's own `ATTESTOR_CAPS` declaration instead of a self-comparison, and `sandbox.py` adds a real read-only proof (§8.1); R1 then gave it its caller — `worker()` vets `resolve_worker_caps` + `assert_read_only` at startup, before consuming (`policy.py` untouched). Still owed: the `attestor_policy` key in the emitted record (M9's), and the workspace-probing `enforce_worker_read_only`, which transfers to the first workspace-reading stage — no workspace exists yet (D4 open).
 6. §2 `_dist` path defect (three-level climb, should be two).
 7. Missing vs spec: GitHub write-back (comments + check runs), review-debt ledger, risk-weighted exposure decay curve, signed cross-file hash chain, SSE/polling, auth, real demo-repo target.
 8. Dependencies pinned in `backend/requirements.txt`: fastapi 0.135.3, uvicorn 0.44.0, pydantic 2.13.0, httpx 0.28.1, jsonschema 4.26.0, pytest 9.0.3, pytest-asyncio 1.4.0. Smoke tests in `backend/tests/test_scaffold.py` (pipeline stub path, policy guard, metric-empty) are the only coverage.
@@ -275,7 +275,7 @@ backend/requirements.txt  backend/.env.example
 backend/app/main.py  backend/app/config.py  backend/app/db.py
 backend/app/routers/{webhooks,runs,metrics}.py
 backend/app/gates/{ingest,extract,parse,verify,adjudicate,emit}.py
-backend/app/orchestrator/{pipeline,jobs}.py
+backend/app/orchestrator/{pipeline,jobs,persistence}.py
 backend/app/llm/{watsonx_client,mock_client}.py
 backend/app/attestor/policy.py
 backend/app/metrics/false_certified.py
@@ -938,3 +938,10 @@ was correct throughout; the drift was entirely in prose. All ten are now correct
   §0.4 does not cover them — append-only works only if every writer re-reads right
   before writing. Ownerless observation for M17 or the next integrator.
 - **API endpoints:** none defined, changed or removed. **Dependencies added:** none.
+
+### 2026-09-27 — M10 lane (R1): loop wired (`a7178d2`, branch `m10-orchestrator`)
+- **Executed on an isolated worktree** off `refactor` @ `7f65009`: Role 2's `M4-ingest` merge was found in progress on `main` (MERGE_HEAD `c229861`, five UU paths matching the dry-run; touched minutes before execution), so the lane never touched `main`. No file overlap with the merge.
+- **As-built deltas:** §4 step 2 rewritten (persist + submit are real); §5 webhook row now "persists `queued`, submits"; §12 lists `persistence.py`; **§11.1 CLOSED**, **§11.2 half-closed** (callers land; endpoint stubs = R2), **§11.5 CLOSED (capability half)** with the workspace probe explicitly transferred (D4). §11.15 untouched (Role 2's merge owns the fix); §11.6/§11.9/§11.11 unchanged.
+- **New facts this lane establishes for the record:** the `runs` table has no `error`/`stage` columns, so failure detail is artifact-only (M15 reads it via `records.py`); `db` helpers take `conn` first and commit themselves, so M10 owns conn lifecycle only; bare `TestClient(app)` never runs lifespan (verified: `test_api.py:10`), so only the flipped test spawns a worker in-suite; lifespan shutdown is cooperative (stop + sentinel), never cancellation.
+- **Integration verification (this entry's second landing):** the behavior commit `a7178d2` was merged into `refactor` early (`932ca68`); this docs commit was stranded and is landed now by rebasing onto `refactor` (Session-20 keep-both: M4's Session 19/20 entries and Session 25's record preserved above). **Chain tests re-run against Role 2's real `ingest`: 349 passed, 0 failed on 3.11.9 AND 3.12.14 at the verified tip, validator 6/6 both legs, tree clean** — §11.15 is closed on this branch (via `0cac970`, M3's Finding mirror line, not this lane). Scope note: Session 25's `399` includes the main checkout's in-flight R4 files; `349` is the committed tree at the verified SHA.
+- **Open:** lane branch unpushed (push for Phase-2 integration); `test_api.py`'s three stub flips + `_dist` + serving are R2's (same role, separate change); `refactor` kept moving during this verification (M2 fixture `1b5be27`, Session-25 record `ba6eec0`, then R4 `c073dbe` + R2 `2048e7c`) — **re-verified at `2048e7c` after R4/R2 landed: 399 passed, 0 failed on 3.11.9 AND 3.12.14, validator 6/6 both legs, tree clean — all 16 guards green against the real M5–M9 chain and R2's serving.** If `refactor` moves again before merge, re-run the suite once more.
