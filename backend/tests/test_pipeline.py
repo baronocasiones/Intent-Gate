@@ -33,9 +33,15 @@ def test_run_pipeline_chains_all_six_stages_to_emit():
     assert out["ok"] is True
     # Gate default: non-zero exit blocks merge (§4.4)
     assert out["exit_code"] == 1
-    # record is the adjudicate stage's output, passed through emit
-    assert out["record"]["stage"] == "adjudicate"
-    assert out["record"]["verdict"] == "PENDING"
+    # FLIPPED 2026-09-27 (Session 25 seam fix, found by the cold E2E): these
+    # two lines pinned M9's nested `record` wrapper, which the committed
+    # consumers of a run record all miss — `run.schema.json`, M14's
+    # `project_run_payload`, and M15's `runs.py`. The artifact was correct
+    # while `GET /api/runs/{id}` served `pending` + `[]`. The adjudicate
+    # verdict is now echoed at the top level; `stage` is emit's own, per the
+    # same convention every other stage in the chain follows.
+    assert out["verdict"] == "PENDING"
+    assert out["status"] == "pending"
 
 
 def test_run_pipeline_feeds_payload_through_every_stage():
@@ -45,8 +51,8 @@ def test_run_pipeline_feeds_payload_through_every_stage():
     reads the raw payload, everything downstream is shaped stub data.
     """
     out = run_pipeline({"b": 1, "a": 2})
-    assert out["record"]["stage"] == "adjudicate"
     assert out["stage"] == "emit"
+    assert out["verdict"] == "PENDING"  # flipped 2026-09-27 — see above
 
 
 def test_pure_run_pipeline_writes_no_rows():

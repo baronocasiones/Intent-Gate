@@ -148,7 +148,8 @@ def test_demo_chain_end_to_end_certified_and_rejected_exit_1():
     }
     emitted = emit.run(adjudicate.run(verify.run(parse.run(extract.run(bundle)))))
     assert emitted["exit_code"] == 1
-    record = emitted["record"]
+    # flat run record (Session 25 seam fix — M14/M15/contract read it at top level)
+    record = emitted
     assert record["verdict"] == "REJECTED"
     assert record["status"] == "rejected"
     by_id = {v["criterion_id"]: v for v in record["verdicts"]}
@@ -184,9 +185,10 @@ def test_emit_blocks_by_default():
     assert out["ok"] is True
     assert out["exit_code"] == 1
     assert out["exit_code"] != 0
-    # emit echoes the adjudicate record through untouched
-    assert out["record"]["stage"] == "adjudicate"
-    assert out["record"]["verdict"] == "PENDING"
+    # emit echoes the adjudicate verdict through untouched (the record is flat,
+    # so `stage` is emit's own per the stage convention — Session 25 seam fix)
+    assert out["verdict"] == "PENDING"
+    assert out["status"] == "pending"
 
 
 def test_every_stage_keeps_the_stage_and_ok_envelope():

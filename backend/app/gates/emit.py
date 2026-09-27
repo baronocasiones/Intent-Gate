@@ -2,8 +2,8 @@
 
 Thin slice (R4): `exit_code` is DERIVED — `0` iff the run-level verdict is
 CERTIFIED, `1` otherwise (the old always-1 was the correct fail-closed default;
-this keeps it for every non-certified path). The record echoes the adjudicate
-output (`stage` + `verdict`) and extends it with the servable envelope:
+this keeps it for every non-certified path). The stage output echoes the
+adjudicate verdict and extends it into the servable run record, flat:
 lowercase D9 `status` (D16: both keys are kept — the badge mismatch is M1/M15/
 M16's to settle, not papered over here), `measured: False`, the verdicts
 verbatim, the bidirectional traceability matrix, and an honestly-unmeasured
@@ -48,9 +48,19 @@ def run(adjudicate_out: dict) -> dict:
     if not isinstance(verdicts, list):
         verdicts = []
 
-    record = {
-        "stage": "adjudicate",  # echo — extend alongside, never replace
-        "verdict": verdict,  # echo (uppercase enum; see D16 re: `status`)
+    # The run record sits FLAT alongside the stage envelope, like every other
+    # stage in the chain (extract/parse/adjudicate all return `stage`/`ok` plus
+    # their payload inline). Session 25 seam fix: a nested `record` wrapper
+    # made this the only non-flat stage, and three committed consumers read
+    # these keys at the top level — `run.schema.json` (frozen, requires
+    # status/verdicts/measured), M14's `project_run_payload`, and M15's
+    # `runs.py`. The cold E2E caught it: the artifact was correct while the
+    # served run showed `pending` + `[]`, hiding the whole audit trail.
+    return {
+        "stage": "emit",
+        "ok": True,
+        "exit_code": 0 if verdict == "CERTIFIED" else 1,
+        "verdict": verdict,  # adjudicate echo (uppercase enum; D16 re: `status`)
         "status": _STATUS[verdict],
         "measured": False,
         "verdicts": verdicts,
@@ -60,10 +70,4 @@ def run(adjudicate_out: dict) -> dict:
             # contract to write, and this stage mints no ids.
         },
         "exposure": dict(_UNMEASURED_EXPOSURE),
-    }
-    return {
-        "stage": "emit",
-        "ok": True,
-        "exit_code": 0 if verdict == "CERTIFIED" else 1,
-        "record": record,
     }

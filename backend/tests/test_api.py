@@ -88,7 +88,17 @@ def test_api_run_detail_queued_run_has_no_artifact_yet():
 
 
 def test_api_run_detail_executed_run_serves_row_plus_artifact():
-    """Row lifecycle status (D-e) + the chain's artifact, with its pointer."""
+    """Row lifecycle status (D-e) + the chain's artifact, with its pointer.
+
+    FLIPPED 2026-09-27 (Session 25 seam fix): this test asserted
+    `status == "pending"` for an *executed* run and passed only because M9's
+    nested `record` wrapper made `runs.py` miss the artifact and fall back to
+    the row's lifecycle status. It was pinning the defect. The cold E2E caught
+    it; the assertions below are the served truth — one criterion, mock-backed
+    ERROR_PATH supported at E4, so the run CERTIFIES and its verdicts are
+    visible to the client. `pending` is the lifecycle word for a chain that has
+    NOT run, never a served verdict for one that has.
+    """
     payload = {"action": "opened", "pr": 142,
                "requirement": "AC-1: refunds over $100 require supervisor approval."}
     run_id = enqueue_run(payload)
@@ -97,9 +107,13 @@ def test_api_run_detail_executed_run_serves_row_plus_artifact():
     assert res.status_code == 200
     body = res.json()
     assert body["run_id"] == run_id
-    assert body["status"] == "pending"
+    assert body["status"] == "certified"
     assert body["measured"] is False
-    assert isinstance(body["verdicts"], list)
+    served = body["verdicts"]
+    assert [v["criterion_id"] for v in served] == ["AC-1"]
+    assert served[0]["verdict"] == "CERTIFIED"
+    assert served[0]["evidence_tier"] == "E4"
+    assert served[0]["locations"] == ["src/refund.py:64"]
     assert body["artifact_path"] is not None
     assert body["artifact_path"].endswith(f"{run_id}.json")
 
