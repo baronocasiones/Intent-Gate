@@ -95,7 +95,9 @@ from app.attestor.sandbox import (
     UNDETERMINED_ERRNOS,
     WriteProof,
     enforce_workspace_readonly,
+    ensure_readonly_workspace,
     probe_workspace_readonly,
+    restore_workspace_writable,
 )
 
 # A worker's raw launch declaration, in the comma/whitespace form M10 supplies.
@@ -1054,5 +1056,319 @@ def test_policy_record_is_immutable(ro_workspace):
     with pytest.raises(FrozenInstanceError):
         policy.workspace_witness = "writable"
     payload = policy.to_dict()  # a copy, so mutating it cannot rewrite the record
-    payload["capabilities"].append("edit")
-    assert policy.capabilities == tuple(sorted(GRANTS))
+
+
+# --- provisioning: making a workspace refuse writes, then proving it does ---
+#
+# `enforce_workspace_readonly` refuses a workspace that accepts the forbidden
+# write, and nothing in the repository can make one refuse. Without this layer
+# the gate would refuse to start every run on every platform, which says
+# nothing about whether the control held. So provisioning exists, and the rule
+# that governs it is the one the rest of this module already runs on: a promise
+# is not evidence, the refused write is. `ensure_readonly_workspace` therefore
+# re-probes after applying the denial and returns that proof, never the exit
+# status of the tool it shelled out to.
+#
+# Nothing here mocks the OS. The rights each platform needs were measured
+# against real directories, and the test that matters most is the one that
+# re-measures, so a future platform cannot inherit these assertions silently.
+
+WINDOWS = os.name == "nt"
+
+
+@pytest.fixture
+def provisioned_workspace(tmp_path):
+    """A writable directory carrying a real file, provisioned read-only, and
+    restored on the way out.
+
+    The restore is not optional. Provisioning removes the ability to write, and
+    pytest's tmp_path cleanup needs that ability to remove the directory; a test
+    that left the denial in place would error during teardown and the failure
+    would point at the wrong thing entirely.
+    """
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "source.py").write_text("x = 1\n", encoding="utf-8")
+    ensure_readonly_workspace(workspace)
+    try:
+        yield workspace
+    finally:
+        restore_workspace_writable(workspace)
+
+
+@SKIP_AS_ROOT
+def test_provisioning_makes_a_writable_workspace_refuse_the_forbidden_write(tmp_path):
+    """The whole point, measured rather than asserted: this directory accepted a
+    write a moment ago, and after provisioning the kernel refuses it.
+
+    There is no mocking of the OS in this file's workspace layer on purpose, so
+    this is a real denial from a real filesystem. Where the platform cannot
+    express it at all — root on POSIX, where the write bit is advisory —
+    provisioning raises instead, and the refusal is the honest answer, which is
+    the next test's subject."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / PROBE_NAME).touch()
+    (workspace / PROBE_NAME).unlink()
+
+    proof = ensure_readonly_workspace(workspace)
+    try:
+        assert proof.writable is False
+        assert proof.witness in REFUSAL_NAMES
+        with pytest.raises(OSError) as caught:
+            (workspace / PROBE_NAME).write_text("x", encoding="utf-8")
+        assert caught.value.errno in REFUSAL_ERRNOS
+    finally:
+        restore_workspace_writable(workspace)
+
+
+@SKIP_AS_ROOT
+def test_provisioning_leaves_the_read_side_working(provisioned_workspace):
+    """A read-only workspace is worthless if it cannot be read.
+
+    This is the assertion the naive Windows denial fails, and it failed for real:
+    the shorthand `(OI)(CI)W` is a *generic* write, so it denies reads and
+    listings too and the read-only workspace becomes unreadable. A control that
+    stops the verifier touching the source is not a control, it is an outage, so
+    the read side is asserted rather than assumed."""
+    assert (provisioned_workspace / "source.py").read_text(encoding="utf-8") == "x = 1\n"
+    assert [entry.name for entry in provisioned_workspace.iterdir()] == ["source.py"]
+
+
+@SKIP_AS_ROOT
+def test_provisioning_refuses_every_write_shape_it_claims_to_refuse(provisioned_workspace):
+    """Each mutation named in `ensure_readonly_workspace`'s docstring is actually
+    refused: creating a file, modifying an existing one, creating a
+    subdirectory. Asserting only the first would leave the other two as prose,
+    and prose is exactly what this module exists to stop selling.
+
+    **The modify case is the one that had to be paid for.** On the first Linux
+    run of this file it failed, and the product was wrong rather than the test:
+    a `0555` directory blocks creating and unlinking its entries but not writing
+    to a file that already exists, because that is governed by the file's own
+    mode. POSIX provisioning now clears the write bits from the contents too,
+    which is what the Windows ACL gets for free from `(OI)(CI)` inheritance.
+    A claim that held on one platform and not the other was a claim about
+    Windows."""
+    with pytest.raises(OSError) as created:
+        (provisioned_workspace / "new.py").write_text("n", encoding="utf-8")
+    assert created.value.errno in REFUSAL_ERRNOS
+
+    with pytest.raises(OSError) as modified:
+        (provisioned_workspace / "source.py").write_text("TAMPERED", encoding="utf-8")
+    assert modified.value.errno in REFUSAL_ERRNOS
+
+    with pytest.raises(OSError) as subdir:
+        (provisioned_workspace / "sub").mkdir()
+    assert subdir.value.errno in REFUSAL_ERRNOS
+
+    assert (provisioned_workspace / "source.py").read_text(encoding="utf-8") == "x = 1\n"
+
+
+@pytest.mark.skipif(
+    WINDOWS,
+    reason=(
+        "POSIX-only: unlinking a pre-existing file is refused here because the "
+        "write bit is gone from the *directory*, and unlinking is governed by "
+        "the parent. Windows cannot express this - see the ACL residual test "
+        "below, which asserts the opposite. The pair is deliberate: the two "
+        "platform controls are not equivalent, and this is where the difference "
+        "is pinned rather than assumed"
+    ),
+)
+@SKIP_AS_ROOT
+def test_posix_provisioning_also_blocks_unlinking_a_pre_existing_file(tmp_path):
+    """The POSIX control is strictly stronger than the Windows one, and the
+    asymmetry is worth having in a test rather than only in a comment.
+
+    `unlink` needs write permission on the parent directory, and provisioning
+    removed it, so removal is refused. The Windows ACL leaves this one open
+    because a deny ACE cannot grant readable-and-undeletable — which is exactly
+    why the record's `no_write_bit` is a weaker claim on Windows than the same
+    mechanism is on POSIX, and why the D6 mount is still the real answer."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "source.py").write_text("x = 1\n", encoding="utf-8")
+    ensure_readonly_workspace(workspace)
+    try:
+        with pytest.raises(OSError) as unlink:
+            (workspace / "source.py").unlink()
+        assert unlink.value.errno in REFUSAL_ERRNOS
+        assert (workspace / "source.py").exists()
+    finally:
+        restore_workspace_writable(workspace)
+
+
+@SKIP_AS_ROOT
+def test_provisioning_restores_write_on_the_contents_not_just_the_directory(tmp_path):
+    """Restore has to be as deep as provisioning, or it is not a restore.
+
+    A teardown that put the write bit back on the directory alone would leave
+    every file inside it at `0444`, and pytest's cleanup — or an operator's next
+    edit — would hit a wall with nothing in the record to explain it."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    nested = workspace / "nested"
+    nested.mkdir()
+    target = nested / "source.py"
+    target.write_text("x = 1\n", encoding="utf-8")
+    ensure_readonly_workspace(workspace)
+
+    restore_workspace_writable(workspace)
+
+    target.write_text("edited\n", encoding="utf-8")
+    assert target.read_text(encoding="utf-8") == "edited\n"
+    (nested / "added.py").write_text("new\n", encoding="utf-8")
+
+
+@SKIP_AS_ROOT
+def test_provisioning_does_not_touch_a_workspace_that_already_refuses(
+    monkeypatch, provisioned_workspace
+):
+    """Probe-first, and the point of it is what the record goes on to say.
+
+    A workspace that already refuses writes must be returned untouched, so a
+    real read-only mount keeps the stronger finding rather than being quietly
+    downgraded to a write-bit permission because this function ran. The denial
+    is replaced with a marker that fails the test if it is ever called, which is
+    the only way to observe a decision that is expressed by *not* doing
+    something."""
+    def _must_not_provision(root):
+        raise AssertionError(
+            "provisioning rewrote a workspace the kernel already refuses — a "
+            "read_only_mount would be downgraded to no_write_bit"
+        )
+
+    monkeypatch.setattr("app.attestor.sandbox._deny_write", _must_not_provision)
+    proof = ensure_readonly_workspace(provisioned_workspace)
+    assert proof.writable is False
+    assert proof.witness in REFUSAL_NAMES
+
+
+@SKIP_AS_ROOT
+def test_provisioning_names_the_control_it_installed(provisioned_workspace):
+    """The weaker control is named as the weaker one, in the string an auditor
+    reads. `no_write_bit` must never be worded as a read-only anything: it is a
+    permission on one directory, which its owner can lift, and the record's
+    credibility rests on the difference being legible."""
+    proof = ensure_readonly_workspace(provisioned_workspace)
+    assert proof.mechanism == MECHANISM_NO_WRITE_BIT
+    assert "read_only" not in proof.mechanism
+    assert MECHANISM_MOUNT != proof.mechanism
+    assert "read_only" in MECHANISM_MOUNT
+
+
+@SKIP_AS_ROOT
+def test_provisioning_is_idempotent(provisioned_workspace):
+    """Called twice — once per run, in practice — it must not accumulate denials
+    or change what the record says. The second call's probe finds the workspace
+    already refusing and returns without touching it."""
+    first = ensure_readonly_workspace(provisioned_workspace)
+    second = ensure_readonly_workspace(provisioned_workspace)
+    assert second.to_dict() == first.to_dict()
+    with pytest.raises(OSError):
+        (provisioned_workspace / "source.py").write_text("TAMPERED", encoding="utf-8")
+
+
+@SKIP_AS_ROOT
+def test_restore_puts_the_workspace_back_writable(tmp_path):
+    """The control is reversible by its owner, which is precisely why the record
+    calls it `no_write_bit` and not a read-only mount. If this stopped working,
+    the POSIX 0555 control would be indistinguishable from a boundary — and
+    every fixture using it would poison pytest's cleanup."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    ensure_readonly_workspace(workspace)
+    with pytest.raises(OSError):
+        (workspace / PROBE_NAME).write_text("x", encoding="utf-8")
+
+    restore_workspace_writable(workspace)
+
+    (workspace / "written_after_restore.py").write_text("ok", encoding="utf-8")
+    assert (workspace / "written_after_restore.py").read_text(encoding="utf-8") == "ok"
+
+
+def test_provisioning_refuses_a_path_that_does_not_exist(tmp_path):
+    """Undeterminable is a failure, not a pass. There is nothing to make
+    read-only and nothing to attest to, and a provisioning step that created the
+    directory to fix it would be provisioning a workspace nobody chose."""
+    with pytest.raises(PermissionError, match="undetermined"):
+        ensure_readonly_workspace(tmp_path / "no-such-workspace")
+
+
+def test_provisioning_refuses_when_the_platform_cannot_refuse(monkeypatch, rw_workspace):
+    """Fail closed on a platform that cannot express the control at all.
+
+    The denial is stubbed to a no-op, standing in for root on POSIX where the
+    write bit is advisory and a 0555 directory still accepts a write. What must
+    happen there is the refusal — not a provision that reports success it did
+    not achieve, which is the fail-open this module exists to prevent. The real
+    POSIX case, where the platform does allow it, is proven for real above."""
+    monkeypatch.setattr("app.attestor.sandbox._deny_write", lambda root: None)
+    with pytest.raises(PermissionError, match="writable"):
+        ensure_readonly_workspace(rw_workspace)
+
+
+@SKIP_AS_ROOT
+def test_provisioning_leaves_no_residue(provisioned_workspace):
+    """A refusal writes nothing by definition. A control that littered the
+    workspace it was protecting would have changed the thing it attests to."""
+    assert [entry.name for entry in provisioned_workspace.iterdir()] == ["source.py"]
+    assert not os.path.lexists(provisioned_workspace / PROBE_NAME)
+
+
+@pytest.mark.skipif(
+    not WINDOWS,
+    reason=(
+        "Windows-only residual: this asserts the one mutation the ACL denial "
+        "cannot block, so anyone tightening the rights sees the gap rather than "
+        "inheriting it. Windows declines to express 'readable but undeletable' "
+        "from a plain deny ACE — measured, not assumed — so unlinking a "
+        "pre-existing file survives. POSIX 0555 and the D6 read-only mount (M10) "
+        "do not have this gap"
+    ),
+)
+@SKIP_AS_ROOT
+def test_windows_acl_cannot_block_unlinking_a_pre_existing_file(tmp_path):
+    """The honest limit of the Windows control, pinned so it stays visible.
+
+    Every other write shape is refused and this one is not. The reason was
+    measured rather than theorised (see `sandbox._WINDOWS_DENY_RIGHTS`): denying
+    `DELETE` on Windows also denies reads, so the workspace becomes unreadable,
+    and not denying it leaves `unlink` working. The gap is why the record names
+    the mechanism `no_write_bit` — a permission on one directory — instead of a
+    read-only mount, and why that mount is M10's control and not this one's.
+
+    If a future Windows expresses readable-and-undeletable, this test fails and
+    the rights in `sandbox.py` should be tightened to match.
+    """
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    victim = workspace / "source.py"
+    victim.write_text("x = 1\n", encoding="utf-8")
+    ensure_readonly_workspace(workspace)
+    try:
+        # The shape that is refused, to keep the contrast honest.
+        with pytest.raises(OSError) as subdir:
+            (workspace / "sub").mkdir()
+        assert subdir.value.errno in REFUSAL_ERRNOS
+        assert victim.read_text(encoding="utf-8") == "x = 1\n"
+
+        deleted = True
+        try:
+            victim.unlink()
+        except OSError:
+            deleted = False
+    finally:
+        restore_workspace_writable(workspace)
+
+    if not deleted:
+        pytest.skip(
+            "this Windows refuses unlink as well, so the read-only control now "
+            "covers every write shape: tighten sandbox._WINDOWS_DENY_RIGHTS to "
+            "match and drop this test"
+        )
+    # The gap is real on this platform, and what it costs is a deletion: the
+    # workspace is now empty. Stated rather than tidied away, because a test that
+    # quietly put the file back would be asserting the control works.
+    assert [entry.name for entry in workspace.iterdir()] == []

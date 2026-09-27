@@ -740,11 +740,50 @@ declaration and fails closed; `assert_read_only()` fails closed on a leak or a g
 `probe_workspace_readonly()` attempts the forbidden write and reports what the kernel
 did, plus which of the two refusals it was, plus the mount's own `ST_RDONLY` answer.
 `enforce_worker_read_only()` is the single worker-startup call.
-**Today:** the module is **complete as a module and unwired in the product.** Both
-layers exist, both fail closed, and `app.attestor` has **zero product callers** — no
-gate, orchestrator or router imports it. `assert_read_only` is a set comparison and
-proves nothing on its own; the control is the refused write, which is why the second
-file exists at all.
+**Today:** the module is **complete and now wired.** Both layers exist, both fail
+closed, and `app.attestor` is called on every run: `orchestrator/pipeline.py`
+provisions the workspace, proves the refusal, and attaches the fragment to the
+record the run returns. `assert_read_only` is a set comparison and proves nothing
+on its own; the control is the refused write, which is why the second file exists
+at all. **What is still not here:** M10's D6 read-only *bind mount*. The gate
+installs the weaker of the two controls the module can name, and the record says
+`no_write_bit` because that is what it is.
+
+**Wired 2026-09-27 (branch `m12-attestor-replan`) — and the prerequisite nobody
+had built.** The gate could not simply be called: `enforce_workspace_readonly()`
+only ever *observed*, refusing anything that accepted the forbidden write, and
+**nothing in the repository could make a directory refuse one** — not on Windows,
+not on Linux. Wiring it alone would have refused every run on every platform,
+which is the fail-closed shape of a control that can never be satisfied.
+`sandbox.ensure_readonly_workspace()` closes that: it provisions (POSIX 0555,
+Windows a directory ACL) and then **re-probes**, because provisioning is a
+promise and a refused write is evidence. It is probe-first, so a real read-only
+mount is never downgraded to a write-bit permission.
+- **The Windows rights were measured and the measurement changed the answer.**
+  The obvious `(OI)(CI)W` is a *generic* write: it denies reads and listings too,
+  so the "read-only" workspace becomes unreadable and the control is an outage.
+  The ACL denies the specific inheriting write/delete-child set instead. Reading
+  and listing stay available, because a verifier that cannot read is not a
+  verifier.
+- **The two platform controls are not the same control, and Linux CI proved it after
+  the first PR was already open.** The first Linux run failed the *modify* case:
+  `chmod 0555` on a directory blocks creating and unlinking its entries but not
+  writing to a file already inside it, which is governed by that file's own mode —
+  where the Windows ACL's `(OI)(CI)` inheritance reaches pre-existing children and
+  never had the hole. **Fixed in the product, not the test:** POSIX provisioning now
+  clears the write bits from the contents as well, and the restore is correspondingly
+  deep. A claim that held on one platform and not the other was a claim about
+  Windows.
+- **One mutation survives the Windows form, and it is recorded rather than
+  smoothed over:** unlinking a file that was already in the workspace. Windows
+  declines to express readable-and-undeletable from a plain deny ACE (measured,
+  not assumed — denying `DELETE` blocks reads too), and POSIX refuses the same
+  unlink because the write bit is gone from the parent. `policy.py` and
+  `sandbox.py` both name it, a Windows-only test pins it so anyone tightening
+  the rights sees the gap rather than inheriting it, and the record's
+  `no_write_bit` mechanism is what it is worth. The D6 mount is the control
+  without this weakness, which is the concrete reason it stays open rather than
+  optional.
 
 **The emitted fragment, which is the auditor's whole view of this control** —
 `to_dict()`, 10 keys, no key renamed or dropped in any session (rule 3):
@@ -762,22 +801,33 @@ refused write is **two different findings** and the record says which.
       `["edit"]` while its own `denied` said `["edit", "execute"]`.
 - [x] The policy is visible in the emitted record, as a fragment M9 can embed verbatim.
       `to_dict()` is JSON-ready, frozen, clock-free and hashable. **The producer is
-      still M9's** — see the open item below, so this box is ticked for the fragment
-      and not for the pipeline.
+      now real:** `run_pipeline` attaches `policy.to_dict()` under
+      `record["attestor_policy"]` before returning, and `test_pipeline.py` asserts
+      the exact key set. A key was added to the run envelope; none was renamed or
+      dropped (rule 3), and no contract changed — the fragment rides the
+      un-contracted artefact envelope (**D15**), which is M9's and M14's obligation.
 - [x] **Never weakened for a demo shortcut** (rule 5, `AGENTS.md` Convention 5). No
       session has moved `DENIES`, and the two widening routes are pinned: a `network`
       grant is rejected as outside the vocabulary, and a *narrower* label is rejected
-      too — `no_write_bit` must never be worded as a read-only anything.
-- [ ] `assert_read_only` is called on the real worker capability set at worker startup
-      (**D6**). **Still open, and it is not M12's to close:** `enforce_worker_read_only`
-      exists and its **75 tests all pass** (63 before Session 22, +12 here), but
-      `gates/verify.py` and `orchestrator/pipeline.py`
-      belong to M7 and M10 (`§0.4`, rule 2). Session 22 deliberately did **not** edit
-      them. The one-line wiring each is owed is in the `policy.py` module docstring.
-- [ ] The D6 **read-only bind mount** exists. Session 22 made it *attestable* — the
-      record now distinguishes a read-only mount from a missing write bit, and reports
-      `ST_RDONLY` — but nothing in the repo creates a read-only mount. Owner **M10**,
-      which `sandbox.py` already names as the holder of the long-lived boundary.
+      too — `no_write_bit` must never be worded as a read-only anything. **The
+      wiring session did not touch `policy.py`'s logic at all** — the ACL work is in
+      `sandbox.py` and the call site is in `pipeline.py`, which is what keeping this
+      box ticked through a wiring change required.
+- [x] `assert_read_only` is called on the real worker capability set at worker startup
+      (**D6**). **Landed 2026-09-27**, as a cross-module edit the user authorised
+      against the refactor plan's "no changes" row — which rested on the false claim
+      that this was already enforced. `run_pipeline` gates **per run, before
+      `ingest`**, so a run that cannot prove read-only never reaches a stage. Not
+      `jobs.worker()`: that is a lifespan-started task whose early exception would
+      be invisible until shutdown, and the queue would stall silently. `worker()`
+      now catches a refusal and keeps consuming, because a dead worker makes a
+      refused run look like a slow one.
+- [ ] The D6 **read-only bind mount** exists. The gate provisions the weaker
+      permission-level control and the record names it honestly as
+      `no_write_bit`; **nothing in the repo creates a read-only mount**, and on
+      Windows the provisioned form has the one residual gap named above. Owner
+      **M10**, which `sandbox.py` already names as the holder of the long-lived
+      boundary. **This is the last substantive item left in M12.**
 
 **Two things this module deliberately does not do.**
 - **It does not require a read-only mount to start a worker.** Both refusals start one;
@@ -785,14 +835,17 @@ refused write is **two different findings** and the record says which.
   wherever the deployment cannot mount read-only — this laptop, and CI — and that
   refusal says nothing about whether the control held. Session 22 considered requiring
   it (the strict reading of D6) and rejected it for that reason. Revisit only if M10
-  can guarantee the mount.
+  can guarantee the mount. **The wiring session did not reopen this:** provisioning
+  makes the mount unnecessary for the gate to pass, and requiring it would convert a
+  working control into a platform check.
 - **It does not observe `llm_egress`.** The grant is declared because M7b workers call
   watsonx.ai themselves, and **no code exercises it yet** — there is no worker pool, and
   `MOCK_LLM` is read nowhere in `backend/app` (`architecture.md` §11.9). The allowlist
   that would pin egress to watsonx.ai is an OS-level control that does not exist; the
   token names the *kind* of egress and nothing more. Session 22 chose to record that
   in prose rather than add a per-run key, because a key saying "we never enforce this"
-  is a thing an auditor can misread as enforcement.
+  is a thing an auditor can misread as enforcement. **Unchanged by the wiring**, and
+  still M11's to close: the gate checks the declaration, not the network.
 
 **Size:** S — and now done except for the two wirings above, which are other modules'.
 **Needs:** nothing. **Note:** this is the pitch's sharpest differentiator and a direct
@@ -1583,6 +1636,83 @@ kept out of this file, per Session 19's precedent.
 
 
 
+
+
+### 2026-09-27 — M12: wire the gate, and build the thing that lets it pass (branch `m12-attestor-replan`)
+
+- **Instruction:** *"replan the m12 attestor read only policy that was created earlier
+  this time with regards to the new changes from the documents and specifically the
+  refactor plan"*, then *"proceed with the changes"*. The `/start` protocol first, and
+  the plan was agreed with the user before execution — four scope choices (core M12
+  files; merge the unmerged Windows fix; the M9 fragment embedding; text-only doc drift)
+  and four design decisions, each with the alternatives that were rejected and why.
+- **The `refactor-plan.md` §M12 row said this module needed no changes, on a premise
+  the repo contradicts.** It read *"Read-only policy already enforced at worker startup
+  on `main`"*; at `main` @ `cbc4ff6` `app.attestor` had **zero product callers**, which
+  §M12's own unticked D6 boxes and `architecture.md` §11.5 both recorded. The user
+  ruled it a doc error, so the correction is **in place in `refactor-plan.md`** with a
+  dated note rather than left for the next reader to rediscover.
+- **Scope, as executed:** AC #3 (visible in the emitted record) and AC #4 (called on the
+  real worker capability set) are now **ticked with the test that pins each**; AC #5 (the
+  D6 read-only bind mount) stays **open and is the last substantive item in M12**, now
+  with a concrete reason rather than a general one: the provisioned control is weaker
+  than a mount, and on Windows it is measurably weaker in one specific way.
+- **`sandbox.py` gained a third layer, and it is the layer the first two were waiting
+  for.** `ensure_readonly_workspace()` provisions a workspace that can refuse writes and
+  then re-proves it. `enforce_workspace_readonly()` only ever observed, so calling the
+  gate without this would have refused every run on every platform — a control that
+  cannot be satisfied, which is not a control. It is probe-first so a real read-only
+  mount keeps the stronger mechanism rather than being downgraded to a write bit.
+- **Two platform findings, measured rather than assumed, both now in the code and pinned
+  by tests.** On Windows the obvious deny `(OI)(CI)W` is a *generic* write: it denies
+  reads and listings, so the read-only workspace becomes unreadable — a control that
+  stops the verifier touching the source is an outage. And Windows declines to express
+  **readable-and-undeletable** from a plain deny ACE, so one mutation survives the
+  provisioned ACL: unlinking a file that was already in the workspace. Both are named
+  in §M12 above, in `sandbox.py`, and in `policy.py`, and a Windows-only test pins the
+  residual so a future Windows that closes it surfaces the gap instead of hiding it.
+- **Rule 5 held by construction, which is the only kind worth much:** `policy.py`'s logic
+  is untouched. `GRANTS`, `DENIES`, `resolve_worker_caps`, `assert_read_only`,
+  `policy_record`, the 10-key fragment — all as they were. The ACL work is in
+  `sandbox.py`; the call site is in `pipeline.py`; the two `policy.py` edits are
+  docstrings that now say the wirings exist.
+- **Cross-module edits, all flagged for their owners (§0.4, one writer per file):**
+  `orchestrator/pipeline.py` (M10) — the gate and the embedding, deliberately placed
+  here rather than in `gates/emit.py` so it does not collide with baron's R4 lane;
+  `orchestrator/jobs.py` (M10) — the missing `except`, which became a requirement rather
+  than a nicety the moment the gate could raise; `backend/tests/conftest.py` (new, M17's
+  directory) — a prerequisite, not a convenience, since with the gate live every test
+  that runs a pipeline needs a declaration and a read-only workspace; `backend/.env.example`
+  (M18) — user-approved, carrying the `ATTESTOR_CAPS` launch obligation.
+- **Convention 7 satisfied, and the control run earned its keep:** seven mutations, seven
+  kills, no survivors — after one **survival** that was a finding rather than a failure.
+  M4 ("provisioning returns the promise instead of the proof") survived because the guard
+  I aimed it at is refused before that line is reached; the mutation was fine and my
+  choice of target was not. Re-aimed at the fail-closed guard, it died. The harness is
+  hardened against the false-kill bug this repo has hit twice (a broken import scoring
+  as a kill under `rc != 0`): a kill requires exit 0/1 **and** a node id outside the
+  measured baseline.
+- **Verification, stated as measured rather than summarised:** `220 passed, 21 stated
+  skips, 1 failed` — the failure being the pre-existing §11.15 parity red owned by
+  M2+M3, untouched here. Validator `OK 6/6`. `test_policy.py` 75 → 86, `test_pipeline.py`
+  6 → 14. No `attestation.db`, no `artifacts/`, no `attestor_workspace/`, no probe
+  residue; the tree byte-identical before and after. **One interpreter only (3.12.10)**,
+  the only one on this machine with pytest — so per Convention 9 this is a statement
+  about one interpreter, and the 3.11/3.12 CI legs plus the Linux-only POSIX path are
+  unverified from here.
+- **A note on how this session ran, because it affects the record:** a **parallel session
+  on the same machine** (GitHub identity) was committing, switching branches and stashing
+  in the shared working tree — including a commit on the branch this session created.
+  On instruction, the work moved to a **separate git worktree** and the shared tree was
+  restored to that session's state; the baseline was therefore
+  `m17-policy-windows` post-merge (`7932952`), not `main`. Two files were briefly
+  modified by a checkout under this session; both were verified by content and restored.
+  **The lesson is the one from the previous entry and it repeated:** in a contended
+  worktree, verify content in the file, not in the branch you expect to have written it.
+- **Open at archive:** the D6 read-only bind mount (M10) — now with a measured statement
+  of what the weaker control misses; the `emit.py` semantic home for the embedding;
+  Figure 6's generator (§11.11, unowned, do-not-show); `llm_egress` still unexercised
+  (M11). D1–D13 and D15 unchanged by this session.
 ### 2026-09-27 — M15: API surface core slice (branch `api-surface`)
 
 > **Heading relabelled per `AGENTS.md` Convention 18 (date + module)** — the draft called

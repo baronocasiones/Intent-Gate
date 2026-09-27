@@ -91,8 +91,32 @@ Conventions that bind every lane: **shape stability** (add keys, never rename/dr
 ### M11 — LLM layer — Aixxn (inside the merge)
 - Land `select_client()` (`llm/__init__.py` — conflict-free vs `main`); `.env` sets `MOCK_LLM=true` for demo/CI; default stays **live/fail-closed** (branch design); live client keeps raising past the key check (no half-implemented client); no third client (pinned test).
 
-### M12 — Attestor — no changes
-- Read-only policy already enforced at worker startup on `main`. Nobody touches `policy.py` this build (rule 5).
+### M12 — Attestor — no changes *(to the policy itself)*
+
+> **CORRECTION 2026-09-27, after the fact — this row's premise was false.** The
+> sentence below read *"Read-only policy already enforced at worker startup on
+> `main`"*, and on `main` @ `cbc4ff6` it was not: `app.attestor` had **zero
+> product callers**, no gate or orchestrator invoked it (`architecture.md`
+> §11.5, and `modules.md` §M12's D6 boxes were still unticked). Two further
+> things the row did not know: nothing in the repo could make a directory
+> refuse a write — so the gate could not have passed anywhere — and the M9
+> fragment was never attached to any record. A "no changes" decision resting on
+> a claim the repo contradicts is the exact failure this project's own
+> conventions exist to catch, so the claim is corrected here rather than
+> quietly overtaken.
+>
+> **What actually landed** (branch `m12-attestor-replan`, §M12 of
+> `modules.md` and the session entries in `architecture.md` / `test-suite.md`):
+> the gate runs per run in `orchestrator/pipeline.py` before `ingest`, the
+> `attestor_policy` fragment is attached to the record the run returns, and
+> `sandbox.ensure_readonly_workspace()` provisions a workspace that can refuse a
+> write (POSIX 0555, Windows a directory ACL). **`policy.py` itself is
+> unchanged** — `GRANTS`, `DENIES`, `resolve_worker_caps`, `assert_read_only`,
+> `policy_record` and the 10-key fragment are all as they were, and rule 5 is
+> untouched by construction. What is still owed and still open: M10's D6
+> read-only bind mount, which is the control without the weakness this
+> provisioning inherits on Windows.
+- The policy layer needs no change, and nobody touched `policy.py` (rule 5).
 
 ### M13 — Metric + harness — DROPPED (D-a)
 - Delete the branch at Phase 0. Harness ACs superseded. `false_certified.py`, its tests, the exposure contract, the validator pair, and the `/api/metrics` stub all stay as-coded.

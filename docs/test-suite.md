@@ -76,11 +76,21 @@ backend/tests/
   __init__.py                      makes pytest put backend/ on sys.path (imports are `app.*`)
   conftest.py                      autouse isolation: DB + artifacts → tmp_path, queue drained (M15)
   test_scaffold.py                 Session-11 smoke tests (pipeline, policy, metric-empty)
+  conftest.py                      autouse: a provisioned read-only attestor workspace under
+                                   tmp_path + the capability declaration every run now needs
+                                   (added 2026-09-27 with the gate; without it the suite would
+                                   only be testing refusals nobody asked for)
   test_gates.py                    §3 stage stubs: shapes, stage order, exit_code=1 blocks
+  test_pipeline.py                 §1/§4 chaining, run-id format, §11.1 unwired-queue characterization,
+                                   and the attestor gate: fragment in the record, refusals for a
+                                   missing/short/leaked declaration, an unprovisionable workspace, and
+                                   a refused run not killing the queue worker
   test_pipeline.py                 §1/§4 chaining, run-id format, queue wiring + persistence (flipped M15)
   test_policy.py                   §8 attestor: the 5-grant/2-deny sets, fail-closed both ways,
                                    the worker-capability resolver, the real workspace write-probe
                                    (which mechanism refused + the mount's own ST_RDONLY answer),
+                                   workspace provisioning (POSIX 0555 / Windows ACL, idempotence,
+                                   read-side intact, fail-closed, the Windows unlink residual),
                                    and the auditor record M9 embeds
   test_metric.py                   §9 seven operators, rate math, exposure-schema conformance
   test_llm.py                      §7 mock determinism; watsonx fails loud; zero-network proof
@@ -193,6 +203,36 @@ the attestor box ↔ `test_policy.py`, the metering note ↔ `test_llm.py` /
 
 - **Frontend**: `frontend/` has no test script or runner — dashboard is
   uncovered (out of scope for this session).
+- **§11 open gaps**: unwired job queue, stub routers (`runs`/`metrics` return
+  hard-coded values), `watsonx_client` past the key check, the `_dist`
+  three-level-climb defect in `main.py` — characterized or explicitly
+  untested, never asserted as correct.
+- **CLOSED 2026-09-27 (`m12-attestor-replan`): `app.attestor` now has a product caller.**
+  The entry stood from Session 22 — "covered thoroughly here and invoked by nothing" —
+  and it was true. `orchestrator/pipeline.py` now gates every run on
+  `enforce_worker_read_only` before the first stage and attaches the fragment to the
+  record, so this is a wiring gap that is **no longer** a gap. The note's other half is
+  now the live one: **the wiring needed a prerequisite no test could have asked for** —
+  nothing in the repo could make a directory refuse a write, so the gate as it stood
+  would have refused every run everywhere. `sandbox.ensure_readonly_workspace()` (0555 /
+  Windows directory ACL) is that prerequisite, and it is the subject of the new
+  provisioning guards in `test_policy.py` plus the pipeline-level refusals in
+  `test_pipeline.py`. Recorded rather than deleted, because the distinction it drew —
+  *wiring* gap, not *coverage* gap — is the reason the fix took new code instead of more
+  tests.
+- **The positive read-only-mount case is still unreachable without root**
+   (`architecture.md` §11.5's mount gap, adjacent). No test can put `tmp_path` on a
+   read-only mount, so `mount_readonly is True` is covered by substituting
+   `os.statvfs` — named as a substitution in the test, per the module docstring's
+   inventory. A real mount is not something CI can produce, so the reading stays
+   synthetic; when M10 deploys the D6 bind mount, that is where it gets proven for real.
+   **Provisioning does not close this**, and the reason is the interesting part: on
+   Windows the ACL that makes a directory refuse writes *also* makes its unlink land
+   (readable-but-undeletable is not expressible from a plain deny ACE), so the
+   provisioned control reports `no_write_bit` and honestly cannot report a mount. A test
+   pins that residual so a future Windows tightening the rights surfaces it.
+- **Async jobs/worker**: `jobs.worker()` is an infinite loop with no test
+  harness yet — add one when the queue is wired.
 - **§11 open gaps**: `watsonx_client` past the key check. (The unwired queue, stub
   routers and the `_dist` three-level climb were closed by M15's core slice —
   their characterization tests were flipped in the same change, per convention 4.)
@@ -832,6 +872,145 @@ failure** on both legs (the failure re-proven pre-existing on parent
 - **Merge with `origin/main` (`d6b7139`):** 3 conflicts in `test_policy.py`, all keep-both — two docstring blocks (union: #49's five-OS-substitution inventory + this branch's three-hazard count and ELOOP note) and the ungated-record region (#49's four new tests kept; this branch's `ro_mode_workspace` swap kept, because the merged body references that fixture).
 - **Linux CI expectation:** every refusal case and all three mount-corroboration tests run for real (skip conditions fire only where the platform cannot produce the observation); the same §11.15 parity red as `main`, nothing else.
 
+
+### 2026-09-27 — M12: the gate is wired, and the tests that make it a control (branch `m12-attestor-replan`)
+
+- **Instruction:** *"replan the m12 attestor read only policy that was created earlier
+  this time with regards to the new changes from the documents and specifically the
+  refactor plan"*, then *"proceed with the changes"*. `/start` protocol first. The plan
+  was agreed with the user as four scope choices (core M12 files, merge the unmerged
+  Windows fix, the M9 fragment embedding, text-only doc drift) and four design
+  decisions (ACL provisioning over a disable switch; per-run gate over lifespan;
+  embedding in `run_pipeline` over `emit.py`; new branch, merge-first).
+- **The premise the refactor plan rested on was false, and the user ruled on it
+  before any code was written.** `docs/refactor-plan.md` §M12 read *"M12 — Attestor —
+  no changes. Read-only policy **already enforced at worker startup on `main`**
+  (rule 5)."* On `main` @ `cbc4ff6` `app.attestor` had **zero product callers** — the
+  same fact §11.5 and `modules.md` §M12's unticked D6 boxes recorded, in the same
+  repository, on the same day. So the "no changes" decision was derived from a claim
+  the repo contradicts, which is the failure this project's own conventions exist to
+  catch. Corrected in place in `refactor-plan.md` rather than quietly overtaken.
+- **A prior session's merge was already in flight on my branch, which changed the
+  baseline.** Branch `m12-attestor-replan` was created off `m17-policy-windows` as it
+  stood mid-merge, not off a clean `main`: a **parallel session on the same machine**
+  (GitHub identity `Vinceric Baron G. Ocasiones`) was committing, switching branches and
+  stashing in the same working tree, and did so again mid-session. The user's
+  instruction was to stop touching the shared tree; the work moved to a **separate git
+  worktree** (`Intent-Gate-m12`, same branch) and the shared tree was restored to their
+  state. **Consequence for anyone reading these numbers:** the baseline was
+  `m17-policy-windows` post-merge (`7932952`), not `main`.
+- **The baseline I inherited was not green, and three of the failures were mine to
+  report but not to patch by assumption.** `223 collected → 201 passed, 21 skipped,
+  4 failed`. One was §11.15 (M2+M3). The other three were `test_policy.py` mount
+  tests failing because Windows has neither `os.statvfs` nor `os.ST_RDONLY`, and the
+  product's `undetermined` answer is correct but not what those tests assert. Those
+  were **already fixed on the branch I inherited** by `SKIP_NO_STATVFS` (a stated
+  skip, Linux CI still runs them) — so the first decision this session made was
+  unforced: the baseline was fixed, not by me, before the work started.
+- **`ensure_readonly_workspace()` is the substantive part, and it did not exist because
+  the gate could never have passed.** `enforce_workspace_readonly()` only ever
+  *observed*: it refused anything that accepted the forbidden write, and **nothing in
+  the repository could make a directory refuse one.** Calling the gate as it stood
+  would have refused every run on every platform — fail-closed, and useless, which is
+  the shape of a control that cannot be satisfied. So provisioning came first: 0555 on
+  POSIX, a directory ACL on Windows, then **re-probed**, because provisioning is a
+  promise and a refused write is evidence. Probe-first, so a real read-only mount is
+  never downgraded to a write-bit permission.
+- **The Windows rights were measured, and the measurement changed the answer three
+  times.** The obvious `(OI)(CI)W` is a *generic* write: it denies reads and listings
+  too, so the read-only workspace becomes **unreadable** and the control is an outage
+  rather than a control. `(WD)` alone left subdirectories creatable and pre-existing
+  files modifiable — a fail-open I would have shipped had I trusted the first guess.
+  Denying `DELETE` breaks reads, so Windows will not express
+  **readable-and-undeletable** at all. The shipped form denies the specific inheriting
+  write/delete-child set, and **one mutation survives it: unlinking a file that was
+  already in the workspace.** That gap is named in `sandbox.py`, named in
+  `policy.py`, pinned by a Windows-only test, and is the concrete reason the record
+  says `no_write_bit` instead of a read-only mount. Reading and listing stay available,
+  because a verifier that cannot read is not a verifier.
+- **CI caught the claim being true on one platform only, and the product was the wrong
+  side of it.** The first Linux run of this branch failed **2 of the new tests**, both
+  with `DID NOT RAISE` on the **modify** case: `chmod 0555` on a *directory* blocks
+  creating, renaming and unlinking its entries, but writing to a file already there is
+  governed by that file's own mode, so a `0644` file inside a `0555` directory still
+  accepted `open(..., "w")`. Windows never had this hole — the deny ACE carries
+  `(OI)(CI)` and reaches pre-existing children — so the test asserted the Windows
+  behaviour as universal and a "measured" claim was in fact measured on one platform.
+  **The fix is in the product, not the test:** POSIX provisioning now clears the write
+  bits from the directory's *contents* as well (`_deny_write_posix`), and
+  `restore_workspace_writable` is correspondingly deep, because a restore that only
+  fixes the top directory is not a restore. The surviving asymmetry is now pinned in
+  both directions — a POSIX test asserts unlink **is** refused, the Windows test
+  asserts it is **not** — because "these two controls are not equivalent" is a fact
+  worth a test rather than a paragraph. **This is the payoff of flagging the risk:** the
+  unrun POSIX path was named in the PR body before CI ran, and the first thing CI found
+  was exactly there.
+- **CI after the fix (both legs): `1 failed, 242 passed, 1 skipped`, identical on 3.11
+  and 3.12.** The single failure is the pre-existing §11.15 parity red. The one skip is
+  the Windows-only ACL residual test, which correctly declines to run on Linux — and
+  its counterpart, the POSIX-only unlink test, correctly runs there. **So the two
+  platform branches are each proven on their own platform and each skipped on the
+  other, which is the strongest statement this suite can make about a
+  platform-dependent control.** The `_deny_write_posix` recursion and the deep restore
+  are therefore verified code rather than unrun code, and the "220 passed" figure
+  earlier in this entry is superseded by CI's 242 on the two legs that run the POSIX
+  path. Local Windows remains **221 passed / 22 stated skips / 1 failed** — a
+  different, smaller set, and the difference between the two numbers is exactly the
+  platform split, not drift.
+- **Guards: 20 added, and what each is for.** `test_policy.py` 75 → 86 (provisioning:
+  makes a writable workspace refuse; leaves the read side working; refuses every write
+  shape it claims to; does not touch a workspace that already refuses; names the control
+  it installed; idempotent; restore; refuses a nonexistent path; refuses when the
+  platform cannot refuse; no residue; the Windows unlink residual). `test_pipeline.py`
+  6 → 14 (the fragment and its exact key set; the path it names; refusals for a missing,
+  short and leaked declaration, each asserting **no stage ran** via a spy on `ingest`;
+  an unprovisionable workspace; a configured path that does not exist, and is not
+  invented; a refused run not killing the queue worker).
+- **A guard I added in the same change found a real omission: `worker()` had no
+  boundary at all.** `run_pipeline` now raises, and the committed `jobs.worker()` did
+  not catch — so the first refused run would have ended the task, and the queue would
+  have kept accepting submissions nothing consumed, making a refused run
+  indistinguishable from a slow one. That is a fail-open assembled out of a missing
+  `except`, so the catch was added in the same commit (M10's file, flagged) and pinned.
+- **Convention 7 satisfied, and the harness caught a guard that was aimed at nothing.**
+  Seven mutations, seven kills, no survivors — but **not on the first pass**: M4
+  ("provisioning returns the promise instead of the proof") **survived**, because I had
+  aimed it at a capability test that is refused *before* the workspace is ever probed.
+  The mutation was not escaping a hole; my choice of target was wrong. Re-aimed at the
+  fail-closed guard, it died. Hardened against the false-kill bug that has bitten this
+  repo twice — a broken import scores as a kill under `rc != 0` — so a kill requires
+  exit 0/1 **and** a node id outside the measured baseline. Harness kept out of the tree
+  (`%TEMP%\opencode\m12_mutation_proof.py`), per the precedent of Sessions 21–22.
+- **`conftest.py` is new and it is a prerequisite, not a convenience.** With the gate
+  live, every test that runs a pipeline needs a capability declaration and a
+  read-only workspace, or the suite would only be testing refusals nobody asked for.
+  The autouse fixture provisions one under `tmp_path` and restores it on the way out —
+  the restore is mandatory, because provisioning removes the ability to write and
+  pytest's cleanup needs it back. Ownership flagged: `backend/tests/` is M17's
+  (modules.md §0.4), following the M15 deviation pattern. **`.env.example` is M18's and
+  was edited anyway** (user-approved), carrying the `ATTESTOR_CAPS` requirement, which
+  is a launch-time obligation the demo cannot skip.
+- **Verification:** `220 passed, 21 stated skips, 1 failed` (§11.15, pre-existing,
+  owners M2+M3), validator exit 0 with `OK 6/6 schemas covered`, no `attestation.db`, no
+  `artifacts/`, no `attestor_workspace/`, and no `.attestor_write_probe` anywhere — the
+  tree byte-identical before and after. **21 skips, all with a stated reason** and
+  measured via `-rs`: 17 `SKIP_AS_ROOT`/platform-cannot-refuse, 1 ELOOP (no symlink
+  privilege), 3 `SKIP_NO_STATVFS`.
+- **Interpreter honesty:** the 3.12.10 leg in `%TEMP%\opencode\venv` is the only
+  interpreter available on this machine (`pyenv versions` → `3.12.10`; `py -0` → 3.14.6,
+  no pytest). **So a single-version run is what this is**, stated as such per
+  Convention 9 rather than dressed up: the 3.11 and 3.12 CI legs, and Linux for the POSIX
+  provisioning branch, are unverified from here and will first be exercised by CI.
+- **Left alone, on purpose:** `llm_egress` is still declared-but-unexercised (M11's
+  dual-mode switch is the missing reader, §11.9) — the gate checks the *declaration*,
+  never the network, and pretending otherwise would be the same overclaim this module
+  exists to avoid. Figure 6 stays do-not-show: the generator is still uncommitted, and
+  the audit owed there is a third divergence now recorded (§11.11), not a fix.
+- **Open at archive:** M10's D6 read-only bind mount — the control without the Windows
+  unlink gap — and the `emit.py` embedding, which was placed in `run_pipeline` to stay
+  clear of baron's R4 lane and may deserve the semantic home later. D1–D13, D15 unchanged
+  by this session. `AGENTS.md` still does not exist in the repo root; it is gitignored
+  and created by `/init` at `/end`.
 ### 2026-09-27 — M15/M10: persistence moved onto M14's helpers (branch `api-surface`)
 - **What the tests now pin:** the pipeline's persistence *is* `db.py`'s, so the suite redirects storage at `app.db.DATABASE_URL` — db.py's own contract (Convention 2: the consumer module, never `os.environ`) — instead of a pipeline-private path attribute. The autouse fixture still isolates every test's DB + artifacts to `tmp_path` and drains the module-level queue around each test, so Convention 3 does not depend on any test author remembering it.
 - **Guard flip (rule 7, same change):** `test_jobs_submit_enqueues_and_drains_cleanly` no longer claims "nothing consumes it … the app never starts worker()" — the lifespan starts the worker now, and consumption is pinned by `test_worker_is_coroutinefunction_and_lifespan_starts_it`. What stands: `submit()` puts exactly one envelope on the queue, and the test still drains it so the module-level queue stays clean for other tests.

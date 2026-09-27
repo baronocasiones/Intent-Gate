@@ -43,13 +43,28 @@ is read after it and cannot override it. And the ungated record path refuses a
 denied capability exactly as the gated one does, so no record this module can
 mint both claims `edit` and denies it.
 
-Both downstream wirings are one line each. A worker launched without all five
-tokens, or without a workspace it can prove read-only, now refuses to start, so
-copy both rather than trimming either:
+What the gate now installs is the weaker half of that pair, and the record says
+so. `sandbox.ensure_readonly_workspace()` provisions a workspace that refuses
+writes — 0555 on POSIX, a directory ACL on Windows — and the proof it returns is
+`no_write_bit`, because a permission on one directory is exactly what it is.
+Reading and listing stay available; the verifier has to read. One mutation
+survives the Windows form, unlinking a file that was already there, because
+Windows will not express readable-and-undeletable from a plain deny ACE. Both
+facts are measured in `sandbox.py` and pinned by tests, and neither is smoothed
+over: the D6 read-only mount, which has no such gap, is still M10's to provide.
+
+Both downstream wirings are one line each, and both are now made. A worker
+launched without all five tokens, or without a workspace it can prove
+read-only, refuses to start:
     export ATTESTOR_CAPS="read, subagent, skill, workflow, llm_egress"
     M7/M10 worker startup:  enforce_worker_read_only(
         os.environ.get(ATTESTOR_CAPS_ENV), workspace)
     M9 emitted record:      record["attestor_policy"] = policy.to_dict()
+`orchestrator/pipeline.py` is that call site (per run, before the first stage),
+and the second line is `run_pipeline`'s. The workspace it passes comes from
+`ATTESTOR_WORKSPACE`, and `sandbox.ensure_readonly_workspace()` provisions it
+first — this module only ever observes, and nothing could refuse a write before
+that existed. Copy both, and do not trim either: the gate is the whole claim.
 """
 
 import os

@@ -87,7 +87,7 @@ at `/` **only if that directory exists** (API-first otherwise).
 | Stage 4 Verify | `backend/app/gates/verify.py::run(ast)` | stub: `{"stage": "verify", "ok": True, "findings": []}`. Spec: N workers (OS processes, not model subagents), 5 static probes (`CODE_SEARCH`, `LOGIC_TRACE`, `STATE_CHECK`, `ERROR_PATH`, `ABSENCE_CHECK`) + adversarial pass over **6 named** failure classes (boundary · omission · contradiction · implicit · negative · concurrency); LLM via watsonx.ai only |
 | Stage 5 Adjudicate | `backend/app/gates/adjudicate.py::run(findings)` | stub: `{"stage": "adjudicate", "ok": True, "verdict": "PENDING"}`. Spec: E0–E6 ladder → `CERTIFIED` / `CONDITIONAL` / `REJECTED` |
 | Stage 6 Emit+gate | `backend/app/gates/emit.py::run(verdict)` | stub: `{"stage": "emit", "ok": True, "exit_code": 1, "record": verdict}`. Spec: traceability matrix, signed hash-chained record, debt ledger, risk-weighted exposure; non-zero exit blocks merge |
-| Read-only policy | `backend/app/attestor/policy.py` — `HARNESS_GROUPS={read,subagent,skill,workflow}` + `OS_PROPERTIES={llm_egress}` (5 grants), `DENIES={edit,execute}`, `resolve_worker_caps(declared)`, `assert_read_only(granted)`, `policy_record(caps, *, enforcement_applied, proof)`; `backend/app/attestor/sandbox.py` — `probe_workspace_readonly` / `enforce_workspace_readonly` | raises `PermissionError` on leaked denies or missing grants, and on a workspace that is writable or unprobeable. Built and tested; **zero product callers** — no gate or orchestrator invokes it (see §11.5) |
+| Read-only policy | `backend/app/attestor/policy.py` — `HARNESS_GROUPS={read,subagent,skill,workflow}` + `OS_PROPERTIES={llm_egress}` (5 grants), `DENIES={edit,execute}`, `resolve_worker_caps(declared)`, `assert_read_only(granted)`, `policy_record(caps, *, enforcement_applied, proof)`; `backend/app/attestor/sandbox.py` — `probe_workspace_readonly` / `enforce_workspace_readonly` / **`ensure_readonly_workspace`** | raises `PermissionError` on leaked denies or missing grants, and on a workspace that is writable or unprobeable. **Wired 2026-09-27:** `orchestrator/pipeline.py` calls it per run before `ingest` and attaches the fragment to the record (§11.5). `ensure_readonly_workspace` provisions a workspace that can refuse a write (0555 / Windows directory ACL) and re-proves it; the control is `no_write_bit`, not M10's absent bind mount |
 | LLM — live | `backend/app/llm/watsonx_client.py::complete(prompt, max_tokens=512)` | raises `RuntimeError` when `WATSONX_API_KEY` unset; otherwise raises `NotImplementedError` — IAM exchange + generation call land after the research spike |
 | LLM — mock | `backend/app/llm/mock_client.py::complete(...)` | deterministic `'{"verdict": "PENDING", "rationale": "mock — no live call"}'`; zero spend |
 | Metric | `backend/app/metrics/false_certified.py` — `OPERATORS` (7) + `false_certified_rate(results)` | `P(CERTIFIED \| spec violation present)`; returns `{false_certified_rate, measured, by_operator}`; `measured = total > 0`; `None` rate when empty |
@@ -179,8 +179,40 @@ than returning, so a worker that cannot prove read-only never starts.
 `subagent` cap is a known wording tension kept as-is from Session 7). **Never weaken
 this in demo shortcuts** (standing convention).
 
-**Unwired.** `app.attestor` is imported by `test_scaffold.py` and `test_policy.py` and
-by **nothing else** — no gate, orchestrator or router. §11.5 is the open item.
+**Wired (2026-09-27).** `app.attestor` is called on every run:
+`orchestrator/pipeline.py` resolves the workspace from `ATTESTOR_WORKSPACE`
+(default `./attestor_workspace`, created on demand; a path an operator names is
+never created, so a typo refuses rather than attests to a directory nobody
+chose), provisions it with `ensure_readonly_workspace()`, and gates the run on
+`enforce_worker_read_only(os.environ.get(ATTESTOR_CAPS_ENV), workspace)` **before
+`ingest`** — a check after the work it authorises is not a check. The fragment is
+attached to the record the run returns, under `attestor_policy`, so the artefact
+carries the evidence rather than the promise. `jobs.worker()` catches a refused
+run and keeps consuming: an uncaught refusal would end the task, and the queue
+would keep accepting submissions nothing consumes, which makes a refused run
+indistinguishable from a slow one.
+
+**What the gate installs, precisely.** `ensure_readonly_workspace()` provisions
+the weaker of the two controls this module can name: 0555 on POSIX, a directory
+ACL on Windows, both reported as `no_write_bit`. It is probe-first, so a real
+read-only mount is never downgraded to a write-bit permission, and the
+re-probe after provisioning is the authority. Two measured facts, neither
+smoothed over: the obvious Windows deny `(OI)(CI)W` is a *generic* write and
+denies reads too — which would make the read-only workspace unreadable — so the
+ACL denies the specific inheriting write/delete-child set instead; and one
+mutation survives it, unlinking a file that was already there, because Windows
+will not express readable-and-undeletable from a plain deny ACE. Both are pinned
+by tests. **M10's D6 read-only bind mount is still the control without that
+weakness, and is still absent from the repo.**
+- **The POSIX branch was found wrong by CI, and it was the product that was wrong.**
+  The first Linux run of this branch failed the *modify* case: `chmod 0555` on a
+  directory blocks creating, renaming and unlinking its entries, but writing to a
+  file already inside it is governed by that file's own mode — so a `0644` file in a
+  `0555` directory still accepted `open(..., "w")`. Windows never had this hole
+  because `(OI)(CI)` reaches pre-existing children, which is how a test written on
+  Windows came to assert a universal claim. Provisioning now clears the write bits
+  from the contents too, the restore is deep to match, and the surviving asymmetry
+  (POSIX refuses the unlink, Windows does not) is asserted in both directions.
 
 ## 9. Publishable metric (as coded)
 
@@ -205,6 +237,21 @@ wired yet.
 2. **CLOSED (M15 core slice, this session).** `GET /api/runs` lists rows newest-first, `GET /api/runs/{id}` returns the envelope + artifact pointers (404 unknown, 500 missing-artifact), `GET /api/metrics` aggregates `false_certified_rate()` over `{operator, verdict}` artifacts (honest `null`/`false` while none exist); `db.get_db` / `write_artifact` have callers. The three stub guards in `test_api.py` were flipped in the same change (rule 7).
 3. Gates return shape-correct stubs with empty payloads (`criteria: []`, `ast: []`, `findings: []`, `verdict: PENDING`).
 4. `watsonx_client.complete` is `NotImplementedError` past the key check — the integration pattern is now researched and specified in `docs/watsonx-integration.md`, but **no code has been written**.
+5. **PARTLY CLOSED 2026-09-27 (`m12-attestor-replan`) — the attestor is wired; the bind mount is still absent.**
+   Reworded twice, and "built and unwired" (Session 22) was true until this session.
+   `app.attestor` now has a product caller: `run_pipeline` provisions the workspace,
+   gates the run on `enforce_worker_read_only` **before the first stage**, and attaches
+   `PolicyRecord.to_dict()` under `record["attestor_policy"]`. **The wiring needed a
+   prerequisite nobody had built** — nothing in the repo could make a directory refuse a
+   write, so calling the gate as it stood would have refused every run on every
+   platform. `sandbox.ensure_readonly_workspace()` (0555 / Windows directory ACL) adds it,
+   probe-first so a real read-only mount is never downgraded to a write-bit permission.
+   **Still open, the honest remainder of D6:** the read-only **bind mount** does not exist
+   in this repo, and the provisioned control is weaker than it — reported as
+   `no_write_bit`, and on Windows it does not stop unlinking a pre-existing file. Owner
+   **M10**. `llm_egress` is also still declared-but-unexercised (§11.9, owner M11); the
+   gate checks the declaration, never the network.
+6. §2 `_dist` path defect (three-level climb, should be two).
 5. The read-only attestor is **built and unwired** (reworded 2026-09-27, Session 22;
    the old text said "`assert_read_only` is test-only; pipeline never calls it", which
    was true but described a set comparison rather than the real gate). `app.attestor`
@@ -224,7 +271,18 @@ wired yet.
     - The **Contracts (M1)** box reads "5 JSON Schemas (draft-07)" and "validator covers 2 of 5 pairs". The truth is **6 schemas and 6 pairs**, all covered and enforced.
     - The **Exposure (M9)** box reads "NOT built — exposure schema has no PAIRS entry". That orphan is exactly what Session 18 closed: `exposure.schema.json` now has `contracts/examples/exposure.json` and a `PAIRS` entry. The box is the thing that is wrong, not the code.
     - The generator §1 refers to, `gen_fig6_architecture.py`, **is not committed on any branch**, so the figure can be neither regenerated nor audited mechanically.
-    - **The Attestor (M12) box is also stale, and Session 22 widened the gap.** It shows the four harness groups only; there are five grants (`llm_egress` is the fifth), and the module has a second file the figure has no shape for at all — `attestor/sandbox.py`, the write-probe that turns the read-only claim into an observation. Per the Session 18 rule, **any module that changes a number or a component count the figure prints owes this same audit**, and M12 has now paid that twice: once for the fifth grant, once for the second file.
+     - **The Attestor (M12) box is also stale, and Session 22 widened the gap.** It shows the four harness groups only; there are five grants (`llm_egress` is the fifth), and the module has a second file the figure has no shape for at all — `attestor/sandbox.py`, the write-probe that turns the read-only claim into an observation. Per the Session 18 rule, **any module that changes a number or a component count the figure prints owes this same audit**, and M12 has now paid that twice: once for the fifth grant, once for the second file.
+     - **Third divergence, added 2026-09-27 (`m12-attestor-replan`):** the box also
+       shows the attestor as a policy, with nothing enforcing it, where the code now
+       *gates every run* and provisions the workspace that makes the gate satisfiable
+       (`ensure_readonly_workspace`). A figure whose attestor box reads "declared"
+       while the pipeline refuses unprovable runs understates the control — the
+       opposite error from the two above, and worth naming because a stale figure is
+       usually wrong in the direction that makes the system look weaker.
+     - **Not fixed in that session, deliberately.** The generator is still
+       uncommitted, so the fix remains recovering or rewriting it and re-running the
+       Session 16 sourcing audit — **not** hand-editing the PNG. Figure 6 stays
+       do-not-show.
     By this file's own precedence rule the figure is wrong and the docs are right. The fix is to recover or rewrite the generator and re-run the line-by-line sourcing audit that Session 16 established — **not** to hand-edit the PNG. Owner: unassigned; owed before the figure is shown to anyone.
 
     > **Numbered 11, skipping 10, on purpose.** The open `receipt-renderer` branch
@@ -1075,6 +1133,69 @@ was correct throughout; the drift was entirely in prose. All ten are now correct
 - **Found by the post-merge run, same branch:** three of #49's mount-corroboration tests pin Linux's *real* `os.statvfs` reading, which Windows cannot produce (no `os.statvfs`, no `os.ST_RDONLY`; the product answers `undetermined`, correctly — but that is not what those tests assert). `SKIP_NO_STATVFS` skips them **with the reason stated**, mirroring the file's root/ELOOP pattern; Linux CI runs all three unchanged.
 - **Verified on Windows, post-merge:** **223 collected → 201 passed, 21 skipped (each with a stated reason), 1 failed** — the failure is §11.15 (`test_demo_traceability_fixture_loads_into_model`, main-parity, owners M2+M3, refactor-plan R5). Validator exit 0 (6/6). Pre-merge record at `dd5e9a8`: `179 passed, 12 skipped` of the then-191-test suite.
 - **No product code touched** (rule 8); M12's behavior unchanged; Linux CI expected green modulo the same §11.15 parity red `main` carries.
+
+
+### 2026-09-27 — M12: the attestor gate is wired (branch `m12-attestor-replan`)
+
+- **Instruction:** *"replan the m12 attestor read only policy … with regards to the new
+  changes from the documents and specifically the refactor plan"*, then *"proceed with
+  the changes"*. Plan agreed before execution: four scope choices and four design
+  decisions, all user-confirmed (details and the rejected alternatives in
+  `docs/test-suite.md`'s entry for this date).
+- **A false claim in a planning document is what set the scope.** `refactor-plan.md`
+  §M12 said the policy was *"already enforced at worker startup on `main`"*. It was not:
+  `app.attestor` had **zero product callers** at `cbc4ff6` — which §11.5 below and
+  `modules.md` §M12's unticked D6 boxes both said in the same repository on the same
+  day. The user ruled it a doc error and authorised the cross-module wiring, so this
+  entry is the correction landing as code rather than as a footnote.
+- **What landed.** `orchestrator/pipeline.py` gates **every run** on
+  `enforce_worker_read_only` **before `ingest`**, resolving the workspace from
+  `ATTESTOR_WORKSPACE` (default `./attestor_workspace`, created on demand; a path an
+  operator names is never created, so a typo refuses rather than attests to a directory
+  nobody chose), and attaches `PolicyRecord.to_dict()` to the record the run returns
+  under `attestor_policy`. `jobs.worker()` now catches what a run raises, because an
+  uncaught refusal would end the task and leave the queue accepting submissions nothing
+  consumes — a refused run made indistinguishable from a slow one.
+- **The part that was not obvious, and is the reason this was more than a wiring
+  change:** the gate could never have passed. `enforce_workspace_readonly()` only ever
+  *observed* — it refused anything that accepted the forbidden write — and **nothing in
+  the repository could make a directory refuse one.** Calling it as it stood would have
+  refused every run on every platform, which is fail-closed and useless. So
+  `sandbox.ensure_readonly_workspace()` was built first: 0555 on POSIX, a directory ACL
+  on Windows, then **re-probed** (provisioning is a promise; a refused write is
+  evidence). It is probe-first, so a real read-only mount is never downgraded to a
+  write-bit permission.
+- **The Windows control is weaker than the POSIX one, and the record says so.** Two
+  measured findings, neither assumed: the obvious `(OI)(CI)W` is a *generic* write and
+  denies reads too — a read-only workspace that cannot be read is an outage, not a
+  control — so the ACL denies the specific inheriting write/delete-child set; and
+  **unlinking a file that was already in the workspace still lands**, because Windows
+  will not express readable-and-undeletable from a plain deny ACE. Hence
+  `workspace_mechanism` reads `no_write_bit`. **M10's D6 bind mount is the control
+  without that gap, and it is still absent from the repo** — the one substantive item
+  left in M12, and the concrete reason it is not optional.
+- **`policy.py` was not touched logically.** `GRANTS`, `DENIES`, `resolve_worker_caps`,
+  `assert_read_only`, `policy_record` and the 10-key fragment are as they were; rule 5
+  holds by construction, not by assertion. Two docstring edits record that the two
+  downstream wirings now exist and where the call site is.
+- **The one editorial decision worth flagging:** a stale figure is normally wrong in the
+  direction that makes the system look *weaker*, and this one is now wrong in the
+  opposite direction — the Attestor box shows a declared policy where the pipeline
+  refuses unprovable runs. Recorded under §11.11 as a third divergence, with Figure 6
+  still do-not-show and the generator still uncommitted.
+- **Verified:** `220 passed, 21 stated skips, 1 failed` (the pre-existing §11.15 parity
+  red, owners M2+M3), validator exit 0 / `OK 6/6`, no tree pollution, no probe residue.
+  Seven mutations killed by seven named guards, none survived. **Single interpreter only
+  (3.12.10)** — the only one this machine has with pytest — so the 3.11/3.12 CI legs and
+  the POSIX provisioning branch are unverified from here and stated as such.
+- **Not actioned, on purpose:** `llm_egress` remains declared-but-unexercised (§11.9,
+  owner M11). The gate checks the *declaration*, never the network, and a record that
+  implied otherwise would be exactly the overclaim this module exists to prevent.
+- **Open at archive:** M10's D6 read-only bind mount; Figure 6's generator recovery
+  (§11.11, unowned); the `emit.py` embedding as the semantic home for the fragment,
+  which was deliberately placed in `run_pipeline` to stay clear of baron's R4 lane. D1–D13
+  and D15 unchanged. `AGENTS.md` still absent from the repo root (gitignored, `/init` at
+  `/end`).
 ### 2026-09-27 — M15/M10: the persistence rewire — the pipeline calls M14, no local shim (branch `api-surface`)
 - **What changed:** the core slice had stood up a private persistence shim inside `orchestrator/pipeline.py` — its own connection, DDL, timestamp source and SQL — while M14's `db.py` already exposed exactly those helpers. Two INSERT/UPDATE/SELECT paths over one table can drift; the rewire deletes the shim and calls the helpers, as `db.py`'s docstring assigns (M10 writes, M15 reads). **`db.py`, `store/`, `config.py` and the contracts were not edited** (module-ownership rule: called, never edited).
 - **Commits:** `5f6f5c6` core slice (real runs/metrics listing, `_dist` fix, lifespan-started worker, the M15 test flips, and the carried §11.15 parity fix); `abdfa6a` absorbs `m17-policy-windows` (PR #53) keep-both; `ac9b373` the rewire itself.

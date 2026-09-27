@@ -20,10 +20,41 @@ assigns them (M10 writes, M15 reads). This module owns no SQL and no
 connection tuning (§0.4: db.py and store/ are called, never edited). The row
 readers stay re-exported here so routers import from one place instead of
 growing query code of their own.
+
+One run's attestor gate (M12): before a single stage executes, the workspace is
+made to refuse writes, the refused write is proved, and the capability
+declaration the worker was launched with is checked against the policy. A run
+that cannot prove either never reaches `ingest` — that is the whole point of a
+gate, and a check performed after the work it was supposed to authorise is not
+one. **The gate sits inside the persistence try**, so a refusal is recorded the
+way a crash is: row `failed`, exception re-raised. A refused run is a loud
+outcome, not a half-executed one.
+
+Order inside the gate is the order `enforce_worker_read_only` documents, for
+the same reason: provision the workspace, then prove it, then judge the
+declaration. Provisioning a run that would have been refused is cheap and
+idempotent; refusing on a capability gap before probing saves a write attempt
+in a directory nobody was authorised to use. Both halves fail closed, so the
+worst case is a refused run, never a run that reads and writes the workspace
+while claiming it cannot.
+
+The proof is attached to the record this function returns, under
+`attestor_policy`, before the artefact is written — so the artefact carries the
+evidence rather than the promise. The mechanism it reports is `no_write_bit` (a
+permission, which its owner can lift) until M10 provides the D6 read-only bind
+mount, and it is never worded as the mount.
 """
+import os
 import uuid
+from pathlib import Path
 
 from .. import db
+from ..attestor.policy import ATTESTOR_CAPS_ENV, PolicyRecord, enforce_worker_read_only
+from ..attestor.sandbox import (
+    DEFAULT_WORKSPACE,
+    WORKSPACE_ENV,
+    ensure_readonly_workspace,
+)
 from ..store import artifacts
 from ..gates import ingest, extract, parse, verify, adjudicate, emit as emit_gate
 from . import jobs
@@ -68,6 +99,36 @@ def _final_status(record: dict) -> str:
     return "failed"
 
 
+def _attestor_workspace() -> str:
+    """The directory this run verifies against.
+
+    Unset means the product-owned default, which is created on demand because
+    the attestor needs a workspace to attest to and inventing nothing here would
+    mean refusing every run for a reason an operator cannot act on. A path an
+    operator *did* name is never created: inventing a directory because of a
+    typo in a configured path is worse than refusing to start, and the refusal
+    names the path that was not there.
+    """
+    configured = os.environ.get(WORKSPACE_ENV)
+    if configured is not None:
+        return configured
+    Path(DEFAULT_WORKSPACE).mkdir(parents=True, exist_ok=True)
+    return DEFAULT_WORKSPACE
+
+
+def _attestor_policy() -> PolicyRecord:
+    """Gate this run, and return the proof it will be recorded with.
+
+    Reads the capability declaration at call time rather than at import, so the
+    launch site owns it and a test can set it with `monkeypatch.setenv` — the
+    alternative, a module-level import-time binding, is what makes env-dependent
+    code untestable (docs/test-suite.md Convention 2).
+    """
+    workspace = _attestor_workspace()
+    ensure_readonly_workspace(workspace)
+    return enforce_worker_read_only(os.environ.get(ATTESTOR_CAPS_ENV), workspace)
+
+
 def enqueue_run(payload: dict) -> str:
     """Mint a run id, persist the `queued` row, submit to the jobs queue.
 
@@ -90,16 +151,25 @@ def run_pipeline(payload: dict, run_id: str | None = None) -> dict:
     `run_id` is supplied by the queue (the row was minted by `enqueue_run`);
     a direct call without one mints its own row, so the synchronous path
     persists exactly like the queued one.
+
+    The attestor gate is the first statement in the try, so a run that cannot
+    prove read-only is marked `failed` and re-raised by the same handler a
+    crash gets — a refused run is recorded loudly and never half-executed.
     """
     run_id = run_id or f"run-{uuid.uuid4().hex[:8]}"
     _mark_running(run_id)
     try:
+        policy = _attestor_policy()
         bundle = ingest.run(payload)
         criteria = extract.run(bundle)
         ast = parse.run(criteria)
         findings = verify.run(ast)
         verdict = adjudicate.run(findings)
         record = emit_gate.run(verdict)
+        # Shape stability (rule 3): a key added, none renamed or dropped. The
+        # fragment is JSON-ready and clock-free, so repeated runs against one
+        # workspace agree — see `test_policy.py`.
+        record["attestor_policy"] = policy.to_dict()
         path = artifacts.write_artifact(run_id, record)
         conn = db.get_db()
         try:
