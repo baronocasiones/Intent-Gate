@@ -36,7 +36,20 @@ Six stages:
 
 **Probe model (§3.2):** 5 static probes per criterion — `CODE_SEARCH`, `LOGIC_TRACE`, `STATE_CHECK`, `ERROR_PATH`, `ABSENCE_CHECK` — plus an adversarial pass across 7 failure classes (boundary · omission · contradiction · implicit · negative · concurrency). Taxonomy extracted from the MIT-licensed `attest` skill.
 
-**Governance by construction (§3.3) — the differentiator:** verifier runs under a read-only `attestor` policy granting read/subagent/skill/workflow and **withholding edit and execute entirely** — structurally incapable of modifying what it verifies — with all LLM reasoning via **watsonx.ai**. bob.ai is fully replaced: not the model, not the harness — no `bob run`, no Bob custom-mode syntax, no Bobcoins. Answers the Delve-style "fabricated evidence" failure mode with architecture, not policy. Direct IBM read-only-custom-mode governance angle.
+**Governance by construction (§3.3) — the differentiator:** verifier runs under a read-only `attestor` policy granting read/subagent/skill/workflow **plus `llm_egress`** (an OS-level network property, not a harness group, so it is never read as a fifth Bob mode) and **withholding edit and execute entirely** — structurally incapable of modifying what it verifies — with all LLM reasoning via **watsonx.ai**. bob.ai is fully replaced: not the model, not the harness — no `bob run`, no Bob custom-mode syntax, no Bobcoins. Answers the Delve-style "fabricated evidence" failure mode with architecture, not policy. Direct IBM read-only-custom-mode governance angle.
+
+> **As coded (2026-09-27).** The grant list above is five tokens, not four, and the
+> withholding is enforced rather than declared: `orchestrator/pipeline.py` refuses any
+> run it cannot prove read-only **before the first stage executes**, and attaches the
+> resulting fragment to the run record so the artefact carries the evidence. Withholding
+> a capability while the workspace is still a writable directory would be theatre, so
+> `attestor/sandbox.py` provisions one that is not — mode 0555 on POSIX, a directory ACL
+> on Windows — and re-proves it by attempting the forbidden write. **The control is a
+> permission on one directory, and is recorded as such** (`no_write_bit`): the
+> read-only *bind mount* that is the real boundary is M10's and is not in this repo yet.
+> `Figure-6-System-Architecture.png` still shows four groups, no `sandbox.py`, and an
+> unenforced attestor — do-not-show until its generator is recovered (architecture.md
+> §11.11).
 
 **Emitted artefacts (§3.4):** per-criterion verdict record · bidirectional traceability matrix · review-debt ledger · risk-weighted exposure (per repo/capability, decay curve) · signed hash-chained evidence record.
 
