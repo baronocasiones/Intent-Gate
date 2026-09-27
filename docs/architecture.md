@@ -876,3 +876,25 @@ was correct throughout; the drift was entirely in prose. All ten are now correct
   `--disable-subagents` vs granted-`subagent` wording tension (kept-as-is since Session 7), and the
    `HARNESS_GROUPS`/`OS_PROPERTIES` split is a forcing function rather than architecture — no code
    branches on it.
+
+### 2026-09-27 — Session 25: M1–M3 plan executed (per refactor-plan.md §3)
+
+- **M2 — `fixtures/demo_payload.json` landed** (`1b5be27`, 1 file): the §1.7 injected body
+  (`action: opened`, `pr: 142`, the AC-1/AC-2 requirement string, `diff_paths:
+  ["src/refund.py"]`) verified byte-for-byte against §1.7 before commit. Pre-commit gate:
+  `test_attest_cli.py` **9/9 green** (fake localhost server, no live LLM, `tmp_path`
+  persistence). `scripts/attest.py` + its suite stay untracked for M18's lane.
+- **M1 — freeze holds:** `git diff bf52608..HEAD -- contracts/
+  scripts/validate_contracts.py` is empty; `scripts/validate_contracts.py` exit 0,
+  **OK 6/6** (`run`/`traceability` pair with `fixtures/`, the other four with
+  `contracts/examples/`). No schema change this build.
+- **M3 — parity confirmed post-merge:** `test_models_parity.py` +
+  `test_schemas_contracts.py` **73 passed**; 7 models, parity 6/6 (main's `Finding`
+  mirror won the M4 merge as planned). §11.15's flipped cross-check test passes.
+- **Full regression gate: 399 passed on 3.11.9 AND 3.12.14** (`/tmp/opencode/m14-venv311`,
+  `m14-venv312`), validator exit 0 on both legs. **§11.15 — "the only known red" — is
+  closed on this branch:** the 399 includes the flipped test, zero failures. Tree clean
+  (`.pytest_cache`/`__pycache__` gitignored); other lanes' in-flight files untouched.
+- **API endpoints:** none defined, changed or removed. **Dependencies added:** none.
+  Only remaining refactors-plan M1–M3 item is M16's `fixtures.js` deletion (out of scope
+  here). §11.12's enum guards stay out per user instruction.

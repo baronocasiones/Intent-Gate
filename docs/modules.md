@@ -1548,3 +1548,19 @@ kept out of this file, per Session 19's precedent.
   via `EROFS`; every refusal test gets `EACCES` from a `chmod 555` directory. Dropping `EROFS`
   does fail the suite (2 tests), so the translation is pinned — but that is substitution, not
   observation. M17's to close.
+
+### 2026-09-27 — Session 25: M1–M3 execution — module decisions
+
+- **Commit discipline (user instruction): one commit per module done.** M2's
+  `fixtures/demo_payload.json` landed alone (`1b5be27`); `scripts/attest.py` +
+  `backend/tests/test_attest_cli.py` stay untracked for M18's lane commit, not bundled
+  with M2's. Docs for this session land as a second, separate commit. M1 and M3 ship
+  no code this build (freeze + merged state), so they have no commits.
+- **M3's `traceability-link` promotion request stays deferred** — promoting it would be
+  a schema change and conflicts with the M1 freeze (refactor-plan D-f). The
+  `INLINE_MIRRORS` self-invalidating exception remains the safe holding pattern.
+- **Ownership ignored by instruction:** the user is finishing everything under the time
+  constraint, so §0.4 lane assignments were not consulted; §0.4 itself is unchanged.
+- **Branch note:** `refactor` @ `1b5be27`, still not pushed; the `origin/refactor`
+  divergence stands (`7f65009` has an identical tree to `a869622`, so the pending
+  pull/merge is content-trivial — reconcile before push).
