@@ -233,6 +233,20 @@ Everything above this line describes the pre-M12 state and is retained verbatim.
 - **Enforcement is still not live.** `enforce_worker_read_only()` has zero callers; the wiring is M7/M10's and the record key is M9's. §11.5 therefore remains open, narrowed.
 - `DENIES` and the body of `assert_read_only()` are **byte-identical** to their pre-M12 form (md5-verified at commit time). `edit` and `execute` remain withheld.
 
+- **§11.20 (new, Session 26):** the MCP path is a **third read-only posture that bypasses the second
+  one entirely.** `attest_run` calls `run_pipeline(payload)` with no `run_id`, which returns
+  `_chain(payload)` directly and never reaches `orchestrator/jobs.py::worker` — so the worker-startup
+  gate that `jobs.py:39` runs (`assert_read_only(resolve_worker_caps(...))`) is **not on this path**, and
+  the kernel-probed `enforce_worker_read_only()` / `policy_record()` fragment is not emitted into the
+  record either (M9's `attestor_policy` key remains unwired). **What the MCP path does enforce is real
+  but narrower:** the client withholds `edit`/shell, and pure mode writes nothing. The finding is not
+  that a layer is missing — it is that calling the gate through Bob is *not the same code path* as
+  calling it through the worker, so a demo that shows the read-only claim must say which posture it is
+  showing. Both are true; conflating them would be the §11.17 pattern (naming a control not in force for
+  the thing it protects) applied to the differentiator itself. Owner: M7/M9/M10, with M18's
+  `customInstructions` — which currently tells Bob "call attest_run, do not adjudicate yourself" —
+  as the surface that must not also imply a probe happened.
+
 ### 8.2 Addendum — Session 26: a third layer, enforced by the client
 
 The two layers above are ours — a declaration in our own process and a kernel probe. This addendum
@@ -1375,3 +1389,76 @@ was correct throughout; the drift was entirely in prose. All ten are now correct
   2. **Verify a moving branch from a pristine extraction, not the shared checkout.** A parallel session's untracked files made a correct tree look broken; `git archive HEAD` separates the branch from the neighbours' work, and is the only way to make a count mean something.
   3. **A hang is an ambiguous result and owes a hand-check, exactly like a survivor.** Both are "not a clean kill", and both were resolved the same way: narrow it by running the suspect file alone, then the single test, until the behaviour is named.
   4. **"Fixed in the tree" and "fixed on the branch" are different claims** — re-verified with `git show HEAD:<file>` rather than by reading the working tree, which is the only check that distinguishes them.
+
+### 2026-09-27 — Session 26: Bob integration — a third read-only posture, and a new gap
+- **Instruction:** research and plan the Bob IDE integration, then build it. **Zero changes to product
+  logic, contracts, fixtures, dependencies, or endpoints** — the work is a new client surface, its config,
+  its guards, and the records for all three.
+- **Implemented (commit `5d359a3` on `refactor`, 4 files +1214, plus these two record appends):**
+  `scripts/mcp_attest_server.py` (MCP stdio server, stdlib only — rule 9), `.bob/custom_modes.yaml` (the
+  `attestor` mode: `groups: [read, mcp]`, `allowedSubagents: []`), `.bob/mcp.json` (stdio registration,
+  `alwaysAllow` on both tools, **no `cwd`**), and `backend/tests/test_mcp_attest_server.py` (36 guards over
+  real stdio). See **§8.2** for the mechanism and the vocabulary provenance.
+- **The design finding:** Bob's `mcp` tool group is **separate from its shell group**, so a custom mode can
+  reach the gate as a tool and have no terminal. This is why the gate is exposed over MCP rather than by
+  pointing Bob at the existing `scripts/attest.py` — the CLI needs a shell, and granting the verifier a
+  shell is the capability §3.3 withholds. **The CLI is not superseded as a component; it is superseded on
+  the client path**, and remains for CI/headless use (`test_attest_cli.py` still guards it).
+- **New gap §11.20 — found by grepping callers, not by reading the design.** The MCP path is a **third
+  read-only posture that bypasses the second one entirely.** `attest_run` runs the pure `run_pipeline` path,
+  which returns `_chain(payload)` directly and never reaches `jobs.py::worker`, so the worker-startup gate
+  (`assert_read_only(resolve_worker_caps(...))`, wired at `jobs.py:39` by R1) and the kernel-probed
+  `enforce_worker_read_only()` / `policy_record()` fragment are **not on this path**; M9's `attestor_policy`
+  key is still unwired (§11.5 unchanged). What the MCP path *does* enforce is real and was verified: the
+  client withholds `edit`/shell, and pure mode persists nothing. **The finding is not a missing layer — it is
+  that two routes into the gate are different code paths**, so a demo showing the read-only claim must say
+  which posture it is showing. Conflating them is the §11.17 pattern (naming a control not in force for the
+  thing it protects) landing on the differentiator itself. Owner: M7/M9/M10, plus M18's `customInstructions`,
+  which currently says "call `attest_run`, do not adjudicate yourself" and must not imply a probe ran.
+- **Verified against the real client, which is the one thing the 36 guards cannot do:** `bob mcp list` reads
+  the committed config and reports `attest-gate: … | enabled | stdio | workspace`; `bob run --mode attestor
+  --max-cost 0.40` loads the mode, connects, calls `attest_run`, and returns the §1.7 verdict (`status:
+  rejected`, `exit_code: 1`, AC-1 `CERTIFIED@E4` `src/refund.py:64`, AC-2 `REJECTED@E2` `src/refund.py:88`,
+  exposure unmeasured) for **0.153 of the 0.40 cap, 1 tool call, ~19 s** — the cap is mandatory under
+  Convention 7, and the run was repeated without `--accept-license` to confirm consent persisted.
+- **Corrections to my own earlier plan, made from the installed `bobshell@2.0.5` bundle rather than its
+  documentation — and both errors were in the docs:** `command` is **not** a tool group, so `DENIES = {edit,
+  execute}` was already correct and the planned client-vocabulary map was **not shipped** (M12's frozen
+  constants stay byte-identical); and `--chat-mode` **does not exist** (0 occurrences) — it is `--mode
+  <slug>`, default `agent`. The mode file cites the bundle as its provenance and a guard fails if that
+  citation is removed.
+- **Verified:** 448 passed / 0 failed on 3.11.9 and 3.12.14, validator 6/6 both legs. **Baseline is 412, not
+  the documented 400** — a parallel session merged `origin/refactor` (`56fb61c`) and landed 12 more tests
+  while this session ran. **20 mutations, 20 killed, 0 survivors** (harness in `/tmp/opencode/`, outside the
+  repo, mandatory control run first, no `-x`, restore from a pristine twin after a leaked mutation was
+  caught *by the control*). Two genuine weak guards in this session's own work were found that way: the
+  fail-closed default in `_format_record` was unreachable from any black-box path, and
+  `test_gates_contain_no_write_calls` missed bare `open(p,'w')` by matching only method names.
+- **New conventions/patterns:**
+  1. **A read-only claim needs the layer that is actually on the path, named.** Three layers exist (our
+     declaration, our kernel probe, the client's tool groups) and the MCP route exercises 1-and-3 while
+     skipping 2. Each is real; the record must say which, because the demo's honesty claim is the product.
+  2. **Pin a positive set, not the absence of a denied one.** A `groups ∩ DENIES == ∅` check passes a mode
+     that gained `browser` or `artifact` — widening the posture without touching the deny list. Exactly
+     `{read, mcp}` is the shape of guard that fails on the edit someone actually makes.
+  3. **A version-controlled config directory needs a secret guard the moment its format admits one.**
+     `.bob/mcp.json` is committed on purpose and MCP has an `env` key built for credentials; the suite now
+     fails on any key-shaped string in `.bob/`, because that mistake is not recoverable from git history.
+  4. **Prefer a guarantee you can prove over a flag whose semantics are undocumented.** No `cwd` in
+     `.bob/mcp.json`, because pure mode writes nothing and holds from any working directory (proved by
+     launching from `/`); the guard that says so is where a future write must be revisited.
+  5. **A white-box test is justified when a black-box test provably cannot reach the invariant** — and the
+     exception gets documented in the test, because "we import it here" otherwise reads as sloppiness.
+  6. **A tool reported missing by a `which`-style probe may be present and merely unpathed.** Bob Shell was
+     installed and invisible until `find ~ -name bob` was run — the same error a parallel session made with
+     `gh`, and the second time this repo has paid for it.
+  7. **A guard that reports the wrong failure is worse than no guard.** My first `os.open` check flagged
+     M4's correct `O_RDONLY | O_NOFOLLOW` read as a violation; a false positive on the one gate behaving
+     correctly is how a real guard gets deleted instead of fixed.
+- **Open at archive:** §11.20 unwired (M7/M9/M10); §11.5 unchanged (`attestor_policy` key and the read-only
+  bind mount still owed); **Bob IDE desktop app not installed**, so IDE surfaces are unexercised while
+  project-level `.bob/` is shared between both clients; the bundle resolves a native policy watcher at
+  `policy-watcher/${platform}-${arch}` and **no `linux-x64` build ships** — lazy, and the runs completed
+  anyway, so unexplained rather than fatal; M18's "non-author executes the runbook" AC still unticked
+  (this session authored what it documents); `refactor` **22 ahead and unpushed** (no network to origin
+  here, so CI is unobserved and the remote tip unverifiable); the dashboard leg (§11.19) still unbuilt.

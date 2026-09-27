@@ -2051,3 +2051,86 @@ kept out of this file, per Session 19's precedent.
 
 
 
+
+### 2026-09-27 — Session 26: Bob integration (MCP tool + read-only `attestor` mode)
+- **Instruction:** research and plan how to integrate IBM Bob, then build it. Bob Shell turned out to
+  be installed on this machine (`bobshell@2.0.5`, commit `2dc180906`, npm-global) but **not on `PATH`**,
+  unauthenticated, and licence-unaccepted. The absence of a `bob` binary on `PATH` was initially
+  recorded as "not installed anywhere" — the same error a parallel session made with `gh` (see the entry
+  above). *Not on `PATH` is not the same claim as not installed, and the cheap disproof is
+  `find ~ -name bob` before concluding anything.*
+- **The design decision, and why it is not the CLI.** `scripts/attest.py` already existed as the Bob-facing
+  surface, but invoking it needs Bob to **run a shell command**, and granting the verifier a shell is the
+  capability §3.3 exists to withhold. The finding that changes the design: **Bob's `mcp` tool group is
+  separate from its shell group.** A custom mode can hold `mcp`, omit `execute`, reach the gate as a tool,
+  and have no terminal. So the CLI and the MCP server are not two routes to one place — one asks the
+  client for a capability, the other does not. The CLI stays for CI/headless use; the MCP server is the
+  client path. **Scope: M18 build. No other module's brief changed**, so no other section is edited here.
+- **Shipped:** `scripts/mcp_attest_server.py` (MCP stdio, stdlib only — rule 9; `initialize` /
+  `notifications-initialized` / `ping` / `tools/list` / `tools/call`; version negotiated against four known
+  revisions; a malformed line returns `-32700` and the session survives; notifications get no reply; stdout
+  carries MCP messages and nothing else, every diagnostic to stderr), `.bob/custom_modes.yaml` (`attestor`
+  mode, `groups: [read, mcp]`, `allowedSubagents: []`), `.bob/mcp.json` (stdio registration, `alwaysAllow`
+  on both tools), and **36 guards** in `backend/tests/test_mcp_attest_server.py` driving the server as a
+  real subprocess over real stdio.
+- **The mode-file guard is a positive pin, and that choice is the load-bearing one.** The obvious guard is
+  "groups ∩ `DENIES` == ∅", and it is **wrong**: adding `browser` or `artifact` widens the posture without
+  touching the deny list, and the guard would pass. The suite pins the group set to **exactly** `{read,
+  mcp}` and separately checks it against the gate's own `DENIES` constant, so the two halves of one claim
+  cannot drift apart silently.
+- **Verified against the real client, not just our own.** `bob mcp list` reads the committed config and
+  reports `attest-gate: python3 scripts/mcp_attest_server.py | enabled | stdio | workspace`; `bob run
+  --mode attestor` loads the mode, connects the server, calls `attest_run`, and returns the §1.7 verdict
+  (`status: rejected`, `exit_code: 1`, AC-1 `CERTIFIED@E4` `src/refund.py:64`, AC-2 `REJECTED@E2`
+  `src/refund.py:88`, exposure unmeasured). **0.153 of a 0.40 cap, 1 tool call, ~19 s** — the cap is
+  mandatory under Convention 7, and Bob's own summary repeated the unmeasured marker verbatim, so the
+  mode's `customInstructions` and the tool's output agreed.
+- **Two planning errors, both from Bob's documentation, both caught by reading the installed bundle.**
+  `command` is **not** a tool group (so `DENIES = {edit, execute}` was already correct and the planned
+  client-vocabulary map was unnecessary — **not** shipped, and M12's frozen constants are untouched); and
+  there is no `--chat-mode` (0 occurrences), it is `--mode <slug>` defaulting to `agent`. Real vocabulary in
+  the shipped builtin mode definitions: `read` `edit` `execute` `browser` `mcp` `skill` `todo` `artifact`
+  `subtask` `subagent` `mode`. The mode file cites the bundle as its provenance and a guard fails if that
+  citation is removed, because the file's central claim is only as good as the source it was read from.
+- **Not verified, and recorded rather than assumed:** the **Bob IDE desktop app is not installed**, so IDE
+  surfaces (its global `~/.bob/settings/` paths, its mode picker) are unexercised — project-level `.bob/`
+  is the same path for both clients, so the artifacts are shared and only the *global* paths differ. The
+  bundle resolves a native policy watcher at `policy-watcher/${platform}-${arch}` and **no `linux-x64`
+  build ships** (darwin-arm64, darwin-x64, win32-x64 only); it is required lazily and the runs completed
+  on linux-x64, so it is not fatal on this path — an **unexplained packaging gap, not a verified design**.
+  Two product bugs in 2.0.5 are in the runbook: `bob --accept-license` and `bob --list-tasks` fail with
+  `Invalid --prompt: Too small` before dispatch (use the `bob run` subcommand form), and a headless run
+  blocks on an interactive "Do you trust this folder?" without `--trust`.
+- **This session's own finding, recorded as new gap §11.20 in `architecture.md`:** the MCP path is a
+  **third read-only posture that bypasses the second one entirely.** `attest_run` runs the pure
+  `run_pipeline` path, which never reaches `jobs.py::worker`, so the worker-startup gate and the
+  kernel-probed `policy_record()` fragment are **not on this path**. Client-enforced and storage-enforced
+  are both real; our own probe is not exercised here. M18's `customInstructions` must not imply otherwise.
+- **Conventions established (this module):**
+  1. **A config file is a claim until something mechanical reads it.** `.bob/custom_modes.yaml` is the
+     Bob-side half of the read-only promise, so a guard parses it and pins the group set exactly. A
+     provenance comment citing the *bundle* (not the docs) is itself guarded, so the file cannot quietly
+     outlive the source that justified it.
+  2. **A version-controlled config directory needs a secret guard the moment its format admits one.**
+     `.bob/` is committed on purpose and MCP's config has an `env` key whose whole purpose is carrying a
+     credential — `test_bob_directory_contains_no_secret` fails the suite on any key-shaped string, because
+     that mistake is not recoverable from git history.
+  3. **Prefer a guarantee you can prove over a flag you cannot.** `.bob/mcp.json` pins **no** `cwd`, because
+     pure mode writes nothing and relative-path semantics for `cwd` are undocumented; a real guarantee beats
+     a documented-shape guess, and the guard that says so is where a future write must be revisited.
+  4. **A white-box test is justified when a black-box test provably cannot reach the invariant.** The
+     fail-closed default in `_format_record` is unreachable from any subprocess path (emit always sets
+     `exit_code`), so it is pinned by importing the module — a deliberate, documented exception to the
+     black-box rule, and a better outcome than a guard that names something it never checks.
+- **Suite:** 448 passed / 0 failed on 3.11.9 and 3.12.14, validator 6/6 both legs. **Baseline is 412, not
+  the documented 400** — a parallel session merged `origin/refactor` (`56fb61c`) and landed 12 more tests;
+  the +36 are this session's guards. **20 mutations, 20 killed, 0 survivors** (harness at
+  `/tmp/opencode/mcp_mutation_harness.py`, outside the repo). The harness found **two genuine weak guards
+  in this session's own work**: the fail-closed default above, and `test_gates_contain_no_write_calls`
+  missing bare `open(p,'w')` because it matched only method names.
+- **Open at archive:** M18's "runbook executed by a **non-author**" criterion is **still unticked** — this
+  session built the tool it documents, so walking §M18's 7 steps cold needs a teammate. §11.20 needs M7/M9/M10
+  to decide whether the MCP path should emit the policy fragment. `scripts/attest.py` is now superseded on
+  the client path but still referenced by `test_attest_cli.py` — kept, not removed. Bob IDE and the
+  `linux-x64` watcher remain unverified. `refactor` is **22 commits ahead and unpushed** (no network to
+  origin from this machine, so the remote tip is unverifiable and CI is unobserved).
