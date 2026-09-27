@@ -1154,46 +1154,83 @@ lifespan work must go through here.
 
 **Purpose:** show the verdict, the evidence ladder, the traceability matrix, and the
 exposure number — the demo's face. **Code:** `frontend/src/` (`App.jsx`, `api.js`,
-`fixtures.js`, 4 components), `vite.config.js` (dev proxy to `127.0.0.1:8000`),
-`package.json` (react 18, vite 6 — **never `npm install`ed yet**). **Today:** live-API
-first with graceful `null` on failure, then fixture fallback, with a `(fixture mode)`
-banner. Works, but has only ever been proven against stub/empty data.
+4 components + `AuditTrail`), `vite.config.js` (dev proxy to `127.0.0.1:8000`),
+`package.json` (react 18, vite 6). **Today (2026-09-27, `b6724d8` + `5c78c4e`):**
+**built, installed, and serving a live run.** `npm install` and `npm run build` both
+succeed; the built `dist` is served by `mount_dashboard()`; an explicit `?run_id=`
+or else the newest run from `GET /api/runs` resolves a real id; the fallback is the
+canonical fixture fetched from `public/`, not a hand-written JS copy.
 
 **Acceptance criteria**
-- [ ] `npm install` and `npm run build` actually succeed — this has never been run.
-- [ ] Fix the three-copy fixture divergence (M2) so the fallback **is** the canonical
-      fixture.
-- [ ] The dashboard renders a **non-stub** run: mixed verdicts, real locations, a tier
-      above `E0`. Verify against M2's realistic fixture, not the empty stub.
-- [ ] `ExposureCard` shows `unmeasured` distinctly from a real rate (1.7). This is the
-      honesty surface — do not let a null rate render as a number.
-- [ ] Production serving works end-to-end: built `dist` served by FastAPI, which depends
-      on M15's `_dist` fix. Test both paths (dev proxy and static mount).
-- [ ] Handle the realistic states, not just the happy one: a run with zero criteria, a
-      criterion with many locations, and an API that is down (fixture mode must not look
-      like a real result).
-- [ ] No test runner exists for the frontend — that gap is M17's, and it is why the
-      `_dist` bug survived: nothing exercised the build.
+- [x] `npm install` and `npm run build` actually succeed — 66 packages, 0
+      vulnerabilities; Vite 6.4.3, 31 modules, `dist/` produced. `package-lock.json`
+      is committed, and `node_modules/`+`dist/` are gitignored.
+- [x] Fix the three-copy fixture divergence (M2) so the fallback **is** the canonical
+      fixture. `src/fixtures.js` deleted; the fallback is fetched from `public/`.
+- [x] The dashboard renders a **non-stub** run: mixed verdicts, real locations, a tier
+      above `E0`. Proved in a browser: AC-1 `CERTIFIED@E4` @ `src/refund.py:64`, AC-2
+      `REJECTED@E2` @ `src/refund.py:88`, no fixture-mode banner.
+- [~] ~~`ExposureCard` shows `unmeasured` distinctly from a real rate (1.7).~~
+      **Superseded by decision D-b** (`refactor-plan.md`): the card is no longer
+      rendered and the dead `fetchMetrics` is removed from `api.js`. `GET /api/metrics`,
+      `exposure.schema.json` and the validator pair are untouched, as D-b requires.
+      The AC is unticked rather than ticked because the honesty surface is now the
+      header's `· fixture mode` tell plus the fallback being the *real* canonical run
+      instead of a weak stub. `ExposureCard.jsx` is left on disk.
+- [x] Production serving works end-to-end: built `dist` served by FastAPI. Both paths
+      exercised — the dev proxy (`npm run dev`, port 5173) and the static mount
+      (port 8000), the latter confirmed to serve the rebuilt bundle hash.
+- [x] Handle the realistic states, not just the happy one: a run with zero criteria
+      (proved against a real run the chain produced from a vague requirement —
+      `PENDING`/orange, empty matrix, honest empty audit trail), a criterion with many
+      locations, and an API that is down (**reproduced with a fetch stub that rejects
+      `/api/*`** — this found a live defect, see below).
+- [ ] No test runner exists for the frontend — that gap is **M17's** and remains. The
+      Python suite now covers the byte-pinned fixture, but nothing exercises the build
+      or the components. Still the reason a frontend defect can hide.
 
-**Size:** M. **Needs:** M2, M15. **Risk:** the demo dies here if unverified — a
-screenshot-quality dashboard that was never built is the classic hackathon failure.
+**Size:** M. **Needs:** M2, M15. **Risk:** retired — the demo's face is built and
+proven rather than a screenshot of an unbuilt shell.
+
+**Found while closing this module, and fixed at the source (M16's own file):** the
+live attempts and the fixture fallback were sequenced so that a **refused connection**
+— a rejected `fetch`, not a non-`ok` response — propagated out of `loadRun` and
+stranded the screen on a spinner, because the fallback lived in the caller's
+`.catch(() => {})`. Reproduced with an `initScript` fetch stub before fixing. Note the
+change to the fixture being an *async* fetch is what exposed it: while the fixture was
+the component's initial state, a throw still rendered it. The fallback now lives inside
+`loadRun`, and **nothing renders below the header until a run is in hand**, so an empty
+ladder and an empty matrix can no longer assert "no criteria were found" when the truth
+is that none could be loaded (Convention 5, fail-closed). Three states are now
+distinguishable: live, fixture mode, and an explicit failure line.
 
 **Requests filed by M2 (2026-09-27)** — M2 owns the data, M16 owns the dashboard, so these
 sat outside M2's write scope:
-1. Delete `frontend/src/fixtures.js` and have `App.jsx` fetch the corrected
+1. ~~Delete `frontend/src/fixtures.js` and have `App.jsx` fetch the corrected
    `/fixtures/demo_run.json` from `public/`, so the demo data is genuinely single-copy.
    `test_public_demo_run_is_byte_identical_to_canonical_fixture` now guards the two JSON
-   copies against each other; it cannot guard a third copy written in JS.
-2. Feed `fixtures/demo_exposure.json` to `ExposureCard` so the mutation number is displayed.
-   `App.jsx` seeds `metrics` as `{false_certified_rate: null, measured: false}` and only
-   `fetchMetrics()` can change it, and `GET /api/metrics` still returns a hard-coded stub
-   (`architecture.md` §11.2) — so nothing on screen shows 0.25 today.
-3. **Defect, verified, not fixed — M16's files.** `App.jsx:23` passes `run.status` into
-   `<VerdictBadge>`, but `VerdictBadge.jsx:2` compares it against the uppercase verdict enum
-   (`'CERTIFIED'` / `'REJECTED'`). A D9-conformant lowercase status matches neither branch
-   and renders **orange** — the same colour as `PENDING` — so the demo's rejected run looks
-   undecided. Normalise case in the component, or give the badge its own status mapping.
-   `EvidenceLadder` and `TraceabilityMatrix` read `run.verdicts` and are unaffected.
+   copies against each other; it cannot guard a third copy written in JS.~~
+   **DONE (`5c78c4e`).** Single-copy confirmed; the byte-pin guards were checked in the
+   same operation and still pass (rule 7).
+2. ~~Feed `fixtures/demo_exposure.json` to `ExposureCard` so the mutation number is
+   displayed.~~ **SUPERSEDED by D-b** — the card is hidden for the demo; the exposure
+   number is unmeasured and nothing on screen should imply otherwise. The backend stub,
+   schema and pair stay as D-b requires.
+3. ~~**Defect, verified, not fixed.** `App.jsx:23` passes `run.status` into
+   `<VerdictBadge>`, but `VerdictBadge.jsx:2` compares it against the uppercase verdict
+   enum...~~ **DONE (`b6724d8`).** The badge normalises with `.toUpperCase()` and now has
+   the `CONDITIONAL` branch it never had. Verified in the browser, not by reading the
+   diff: a rejected run renders `rgb(255, 0, 0)`, where before it rendered the
+   undecided orange. `EvidenceLadder` and `TraceabilityMatrix` were unaffected, as
+   recorded.
+
+**Added beyond the brief (2026-09-27):** an `AuditTrail` section rendering each
+verdict's `rationale` — the text the gate exists to produce, which every fixture and the
+API carried and the screen never showed (Convention 5). Written in the existing
+component idiom: `<section>` + `<h2>` + a `<ul>`, no styles, matching
+`EvidenceLadder`/`TraceabilityMatrix`. The header also shows the `run_id`, so a judge
+can see *which* run they are looking at. `run.measured` is still served and still
+rendered nowhere — the remaining part of the §11.18 honesty gap, not closed here.
 
 ### M17 — Test suite + CI
 
@@ -2147,3 +2184,14 @@ kept out of this file, per Session 19's precedent.
   the client path but still referenced by `test_attest_cli.py` — kept, not removed. Bob IDE and the
   `linux-x64` watcher remain unverified. `refactor` is **22 commits ahead and unpushed** (no network to
   origin from this machine, so the remote tip is unverifiable and CI is unobserved).
+
+### Session 28 — 2026-09-27 (M16 dashboard — closed, `b6724d8` + `5c78c4e`)
+- **Instruction:** *"verify what are still needed to be done in the frontend; I've been informed that we just need to connect it to the API."* **M16 is now closed** (§M16 above, rewritten in place). The information was directionally right and materially incomplete: connecting the wire was one third of the job, and the two defects that would have shipped with a green build are the ones every prior record had already written down.
+- **No brief of another module changed.** The backend was read, not edited: `GET /api/runs` already served newest-first, and the detail endpoint's shape already matched `run.schema.json` + `verdict.schema.json` verbatim — which is why no adapter was needed and the diff stayed inside M16's own files.
+- **M2's three filed requests: two done, one superseded.** Request 1 (delete `fixtures.js`, read `public/`) and request 3 (the `VerdictBadge` lowercase-`status` defect) are closed; request 2 (feed `demo_exposure.json` to `ExposureCard`) is **superseded by D-b** and marked as such rather than silently dropped. Both byte-pin guards in `test_schemas_contracts.py` were checked in the same operation and still pass (rule 7).
+- **AC 4 is marked `[~]` superseded, not ticked.** Under D-b the exposure card is hidden, so the honesty surface moved to the header's `· fixture mode` tell and to the fallback being the *real* canonical run. Ticking it would assert something the demo no longer does.
+- **Found and fixed inside M16:** a refused connection (rejected `fetch`, not a non-`ok` response) stranded the screen on a spinner, because the fallback lived in the caller's `.catch()`. Reproduced with a fetch stub before fixing. **My own change exposed it** — making the fixture an async fetch (needed to kill the triple copy) removed the initial state that had been silently absorbing the throw. Fixed at the source, with the whole body gated on having a run so an empty render cannot assert "no criteria were found" when none could be loaded.
+- **Added beyond the brief:** the `AuditTrail` section rendering each verdict's `rationale` (Convention 5) — the text the gate exists to produce, carried by every fixture and served by the API, and shown nowhere. Written in the existing component idiom (`<section>` + `<h2>` + a `<ul>`, no styles) at the user's instruction not to stray from the current UI.
+- **Verified in a browser, not by curl** (a Vite `dist` is client-rendered, so curl returns a shell): live render with no fixture-mode banner and a `rgb(255, 0, 0)` badge; both topologies; a real zero-criteria run; a dead API. **448 passed / 0 failed on 3.11.9 and 3.12.14, validator 6/6 both legs**, count unchanged.
+- **Two lost updates, the second one mine:** the earlier parallel fix of this same gap was never committed and is unrecoverable (no commit, no dangling object), so `b6724d8` re-implemented it; and `b6724d8` was then itself incomplete — a concurrent git operation unstaged the `fixtures.js` deletion the commit message claimed — caught by `git show HEAD:`, fixed in `5c78c4e`. Details in `architecture.md`.
+- **Still open for M16/M17:** no frontend test runner, which is the reason a frontend defect can hide from the suite; `run.measured` still served and rendered nowhere (the remaining part of §11.18).
