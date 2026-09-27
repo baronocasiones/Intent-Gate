@@ -1,7 +1,7 @@
 """Typed in-process mirrors of contracts/*.schema.json — one model per contract.
 
 Two tiers, deliberately:
-  * contracts/ is the PERMISSIVE interchange layer. None of the five draft-07
+  * contracts/ is the PERMISSIVE interchange layer. None of the six draft-07
     schemas sets `additionalProperties: false`, so extra keys are tolerated by
     omission. That is what lets a fixture or a payload carry more than the
     contract needs.
@@ -37,6 +37,7 @@ from typing import Literal
 
 Verdict = Literal["CERTIFIED", "CONDITIONAL", "REJECTED", "PENDING"]
 EvidenceTier = Literal["E0", "E1", "E2", "E3", "E4", "E5", "E6"]
+Probe = Literal["CODE_SEARCH", "LOGIC_TRACE", "STATE_CHECK", "ERROR_PATH", "ABSENCE_CHECK"]
 
 
 class ContractModel(BaseModel):
@@ -60,33 +61,46 @@ class Criterion(ContractModel):
 
 
 class Finding(ContractModel):
-    """contracts/findings.schema.json — one probe result against one criterion.
+    """contracts/findings.schema.json — one probe result against one criterion (M7).
 
-    Produced by M7 (verify), consumed by M8 (adjudicate). Two fields are
-    deliberately shaped to preserve non-decisions that are NOT M3's to make, and
-    both are pinned by `test_schemas_contracts.py` so they cannot be widened here
-    quietly either:
+    Merged from two independent additions — one on each side of this merge, both
+    adding the same five fields. The union of both docstrings is kept because each
+    records something the other does not.
 
-    * `result` is a bare `str`. The contract leaves it unenumerated on purpose —
-      the vocabulary of probe outcomes belongs to the verification stage, not to
-      the contract layer. Narrowing it in this mirror would smuggle a decision
-      into the strict layer that the permissive layer deliberately defers.
-    * `evidence_tier` is ABSENT. The E0-E6 ladder is named in the source and
-      never defined there, so it is decision D1; the contract forbids declaring
-      it. D1 has since been ratified (docs/modules.md 1.4), but the tier is
-      derived by M8 from which probe ran, not carried on the finding — so this
-      mirror still has no field for it. If M1 ever adds `evidence_tier` to the
-      contract, M3 must add it here or M7's output will be rejected by its own
-      strict mirror, which is the intended direction of failure (loud, not
-      silent).
+    **No defaults, for the same reason `Criterion` has none.** All five keys are in
+    the contract's `required`, and a probe that silently defaulted its `note` or
+    `location` to `""` would attest that something was examined when it was not. A
+    finding with no location is not admissible evidence at all, so a default here
+    would let an unlocated probe result validate as a well-formed one.
 
-    `probe` IS enumerated: the five names are settled by the source and pinned
-    by `test_findings_probe_enum_is_the_five_named_probes`, so the literal
-    cannot drift from the contract.
+    Two properties of the contract are load-bearing and are carried across
+    deliberately rather than "cleaned up":
+
+    * **`result` is unenumerated.** Its vocabulary belongs to M7, not to M1, so it
+      stays a bare `str` here. Narrowing it in this mirror would smuggle a decision
+      into the strict layer that the permissive layer deliberately defers. The
+      moment M7 ratifies one, M3 changes in the same commit. Enforced from the model
+      side by `test_finding_result_is_not_narrowed_to_a_vocabulary_the_contract_defers`.
+    * **`evidence_tier` is ABSENT, on purpose — and D1 is now RATIFIED.** The
+      contract forbids declaring it, and the E0-E6 ladder is undefined in the source
+      (that was decision **D1**, ratified 2026-09-27 in `docs/modules.md` 1.4). The
+      field is still absent, but no longer because D1 is open: the tier is *derived
+      by M8 from which probe ran*, not carried on the finding. A finding states what a
+      probe observed; a verdict states how far the evidence reached. So the honest
+      contract for `findings` has no tier field either way. **Consequence to carry, not
+      to act on:** if M1 ever adds `evidence_tier` for M7b, M3 must add it here in the
+      same change or M7's output is rejected by its own strict mirror — which is the
+      intended direction of failure, loud rather than silent.
+
+    `probe` reuses the contract's five-value enum as the `Probe` alias, so an unknown
+    probe name is a loud `ValidationError` rather than a finding attributed to a probe
+    nobody ran. `test_mirror_field_types_are_the_contract_field_types` pins the alias's
+    members to the contract enum, closing the alias-to-field gap that
+    `architecture.md` §11.12 records as unguarded for `Verdict` / `EvidenceTier`.
     """
 
     criterion_id: str
-    probe: Literal["CODE_SEARCH", "LOGIC_TRACE", "STATE_CHECK", "ERROR_PATH", "ABSENCE_CHECK"]
+    probe: Probe
     result: str
     location: str
     note: str

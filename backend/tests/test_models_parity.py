@@ -29,6 +29,7 @@ from app.models.schemas import (
     CriterionVerdict,
     Exposure,
     Finding,
+    Probe,
     RunRecord,
     TraceabilityLink,
     TraceabilityMatrix,
@@ -536,3 +537,84 @@ def test_demo_traceability_fixture_loads_into_model():
     # actually landed: a real matrix, with a tier above E0 and real locations.
     assert any(link.evidence_tier != "E0" for link in matrix.links)
     assert all(link.locations for link in matrix.links)
+
+
+# --- merged in from origin/main: independent guards on Finding ---------------
+# Both sides added a `Finding` mirror and both wrote guards for it. Nothing of
+# theirs is deleted except the one exact-name duplicate above, where ours
+# round-trips through JSON as well and is a strict superset. Overlapping-purpose
+# guards are kept on both sides: a redundant guard is cheap, a deleted one is how a
+# regression returns.
+
+
+def test_finding_accepts_the_contracts_own_example():
+    """Cross-check the mirror against corpus data, not just constructed values.
+
+    `contracts/examples/findings.json` is the value the validator gate checks,
+    so the example -- not a hand-written literal -- is what the mirror has to
+    survive. Only `criterion` and `exposure` still lack a fixture pair
+    (docs/test-suite.md, Known gaps).
+    """
+    example = json.loads((ROOT / "contracts" / "examples" / "findings.json").read_text())
+    assert Finding(**example).model_dump() == example
+
+
+def test_finding_rejects_an_unknown_probe():
+    """Negative assertion, per Convention 8 -- a round trip cannot catch this.
+
+    A finding attributed to a probe nobody ran is a fabricated evidence
+    location, so the enum has to bite. The alias contents themselves are pinned
+    to the contract enum by `test_schemas_contracts.py::FIVE_PROBES`; this pins
+    the other half of the pair -- that the field actually *uses* the alias --
+    which is the wiring `architecture.md` 11.12 records as unguarded for
+    `Verdict` / `EvidenceTier`. Re-typing `probe` to `str` fails both.
+    """
+    assert Finding.model_fields["probe"].annotation is Probe
+
+    with pytest.raises(ValidationError):
+        Finding(
+            criterion_id="AC-1",
+            probe="TELEPATHY",  # not one of the five
+            result="confirmed",
+            location="src/refund.py:88",
+            note="found",
+        )
+
+
+def test_finding_does_not_encode_d1_tier_semantics():
+    """No tier may appear on the mirror — and D1 is now RATIFIED, which is why.
+
+    Written when D1 was open: `contracts/findings.schema.json` says in its own
+    `description` that a tier is *expected* alongside a finding but must NOT be added
+    until the E0-E6 ladder is decided. That instruction had no mechanical guard — adding
+    `evidence_tier` to this model kept the whole suite green while the mirror silently
+    started encoding a ladder nobody had ratified. This pins the absence, so the failure
+    lands on whoever tries.
+
+    **Corrected at merge (2026-09-27):** D1 *is* ratified now (`docs/modules.md` 1.4), so
+    this test's original justification — "D1 is unratified" — is false and would have
+    told the next reader the decision was still open. The assertion stands on better
+    ground: the tier is *derived by M8 from which probe ran*, not carried on the finding.
+    A finding states what a probe observed; a verdict states how far the evidence
+    reached. So there is still no tier field here, and the reason is a design position
+    rather than a pending decision.
+
+    If M1 ever adds `evidence_tier` for M7b, M3 must add it here in the same change AND
+    delete this test — do not quietly widen the allowance.
+    """
+    assert "evidence_tier" not in Finding.model_fields, (
+        "Finding must not carry a tier: the tier is M8's to derive from which probe ran. "
+        "Adding it here also needs it in contracts/findings.schema.json, and this test "
+        "deleted, in the same change."
+    )
+
+
+def test_finding_result_stays_unenumerated():
+    """`result`'s vocabulary belongs to M7, not to M1 or M3.
+
+    The contract declares `result` a bare string on purpose, and enumerating it
+    here would let the mirror invent a vocabulary no contract ratified. When M7
+    agrees one, M3 changes in the same commit and this test flips deliberately
+    (docs/test-suite.md Convention 4).
+    """
+    assert Finding.model_fields["result"].annotation is str

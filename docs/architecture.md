@@ -7,7 +7,10 @@ idea remains `IBM BOB.pdf` (Adrian, pp. 14–25).
 
 Status: **scaffold** — FastAPI process boots, pipeline stub path runs end-to-end,
 contract validator passes; gates/routers/store return stubs or TODOs (see §11 gaps).
-Last verified against code: **2026-09-27** (this session).
+Last verified against code: **2026-09-27** (Session 21 — 7 mirrors in `app/models/schemas.py`
+against 6 contracts, 118 tests green on **four** interpreters: 3.10.21 / 3.11.9 / 3.12.14 /
+3.14.7, validator exit 0 on each; see §11.14 for why the dependency set behind those legs
+is not yet reproducible, and `docs/test-suite.md` for the full matrix).
 
 ## 1. Runtime shape
 
@@ -80,8 +83,7 @@ at `/` **only if that directory exists** (API-first otherwise).
 | Stage 4 Verify | `backend/app/gates/verify.py::run(ast)` | stub: `{"stage": "verify", "ok": True, "findings": []}`. Spec: N workers (OS processes, not model subagents), 5 static probes (`CODE_SEARCH`, `LOGIC_TRACE`, `STATE_CHECK`, `ERROR_PATH`, `ABSENCE_CHECK`) + adversarial pass over **6 named** failure classes (boundary · omission · contradiction · implicit · negative · concurrency); LLM via watsonx.ai only |
 | Stage 5 Adjudicate | `backend/app/gates/adjudicate.py::run(findings)` | stub: `{"stage": "adjudicate", "ok": True, "verdict": "PENDING"}`. Spec: E0–E6 ladder → `CERTIFIED` / `CONDITIONAL` / `REJECTED` |
 | Stage 6 Emit+gate | `backend/app/gates/emit.py::run(verdict)` | stub: `{"stage": "emit", "ok": True, "exit_code": 1, "record": verdict}`. Spec: traceability matrix, signed hash-chained record, debt ledger, risk-weighted exposure; non-zero exit blocks merge |
-| Read-only policy | `backend/app/attestor/policy.py` — `GRANTS={read,subagent,skill,workflow}`, `DENIES={edit,execute}`, `assert_read_only(granted)` | raises `PermissionError` on leaked denies or missing grants. Enforced in tests only today, not in the pipeline path (see §11) — **row superseded as of Session 20 (M12): `GRANTS` gained `llm_egress`, and enforcement primitives now exist but are still unwired. See §8 addendum and §11.5** |
-| Read-only proof | `backend/app/attestor/sandbox.py` — `probe_workspace_readonly()`, `enforce_workspace_readonly()`, `WriteProof` | **new in Session 20 (M12).** Proves the workspace is read-only by attempting the forbidden write; `EROFS` and `EACCES` are both refusals, an unprobeable path is `undetermined` and never reported safe. Zero callers — M7/M10 own the call site |
+| Read-only policy | `backend/app/attestor/policy.py` — `HARNESS_GROUPS={read,subagent,skill,workflow}` + `OS_PROPERTIES={llm_egress}` (5 grants), `DENIES={edit,execute}`, `resolve_worker_caps(declared)`, `assert_read_only(granted)`, `policy_record(caps, *, enforcement_applied, proof)`; `backend/app/attestor/sandbox.py` — `probe_workspace_readonly` / `enforce_workspace_readonly` | raises `PermissionError` on leaked denies or missing grants, and on a workspace that is writable or unprobeable. Built and tested; **zero product callers** — no gate or orchestrator invokes it (see §11.5) |
 | LLM — live | `backend/app/llm/watsonx_client.py::complete(prompt, max_tokens=512)` | raises `RuntimeError` when `WATSONX_API_KEY` unset; otherwise raises `NotImplementedError` — IAM exchange + generation call land after the research spike |
 | LLM — mock | `backend/app/llm/mock_client.py::complete(...)` | deterministic `'{"verdict": "PENDING", "rationale": "mock — no live call"}'`; zero spend |
 | Metric | `backend/app/metrics/false_certified.py` — `OPERATORS` (7) + `false_certified_rate(results)` | `P(CERTIFIED \| spec violation present)`; returns `{false_certified_rate, measured, by_operator}`; `measured = total > 0`; `None` rate when empty |
@@ -113,8 +115,11 @@ No auth, no SSE/polling, no GitHub comment/check-run write-back yet (all were ol
 
 ## 6. Persistence
 
-- **Index:** SQLite WAL single file (`./attestation.db` default). Schema is one table (`runs`). WAL mode set on every `get_db()`. No migrations, no callers.
-- **Artifacts:** JSON files under `ARTIFACT_DIR`, each self-describing with a `sha256` of its own sorted body (hash-chained *record* in the weak sense: tamper-evident per file; no cross-file chain yet — that is spec-future).
+- **Index:** SQLite WAL single file. One table (`runs`: `id, status, created_at, artifact_path`) plus `idx_runs_created_at` for newest-first listing. WAL mode set on every `get_db()`. No migrations. The connection default is env-wired: `get_db()` with no path derives from `config.DATABASE_URL` (`_sqlite_path` strips the `sqlite:///` scheme); an explicit path always wins. `config.py` itself is untouched (M11's file).
+- **Writes:** `save_run` / `set_status` hold the `commit()` — the caller cannot forget it — and `set_status` returns the rowcount so a missing run reads as a blocking failure (rule 6). `now_iso()` is the single timestamp source (UTC, tz-aware), which is what makes `created_at` a pinned ISO-8601 `str` (M14 AC 2). Reads: `get_run` (row or `None` — M15's 404) and `list_runs` (newest-first, `id DESC` tiebreak).
+- **Artifacts:** JSON files under `ARTIFACT_DIR`, each self-describing with a `sha256` of its own sorted body (hash-chained *record* in the weak sense: tamper-evident per file; no cross-file chain yet — that is M9/D8). The envelope is written payload-first, store-keys-last, so a payload can never forge `sha256`; `artifact_path_for()` is the single path resolver both writer and reader use. `prev_digest` is a PROPOSED, UNCONTRACTED D8 seam for M9 (D15) — pinned provisional by a self-invalidating test that fails the day M1 contracts the envelope.
+- **Typed reads:** `store/records.py` — `read_artifact` (raw envelope, `None` when absent), `project_run_payload` (whitelist to the four `run.schema.json` keys — discharges `modules.md` §M3 obligation 1), `read_run_record` (strict `RunRecord`; raises on malformed per the `sandbox.py` posture, `None` only for missing). First product caller of M3's mirrors — §11.10 partially discharged for the read path; gates/routers still don't construct models.
+- **Known limitation (accepted, recorded):** `DATABASE_URL`'s `./attestation.db` and `ARTIFACT_DIR`'s `./artifacts` resolve against the process CWD — a server restarted elsewhere silently gets a different store. Same bug class as the §11.6 `_dist` climb. Held as-is by decision; fixing it means a root-resolution convention nothing else follows.
 - **Convention (carried):** envelope + artifact-pointer integration — API returns small records pointing at artifact files, never giant blobs inline.
 
 ## 7. LLM layer + spend discipline
@@ -142,7 +147,47 @@ No auth, no SSE/polling, no GitHub comment/check-run write-back yet (all were ol
 
 ## 8. Read-only attestor (differentiator, as coded)
 
-`GRANTS = {read, subagent, skill, workflow}`; `DENIES = {edit, execute}`. `assert_read_only()` fails closed on either leak or incompleteness. The N-worker fan-out in Stage 4 is N **OS processes**, not model-invoked subagents (this is what the Figure 6 footer note means; the fleet-flags string `--disable-subagents` vs the granted `subagent` cap is a known wording tension kept as-is from Session 7). **Never weaken this in demo shortcuts** (standing convention).
+Two layers, and the second one is the point.
+
+**Declaration** (`attestor/policy.py`): `HARNESS_GROUPS = {read, subagent, skill,
+workflow}` plus `OS_PROPERTIES = {llm_egress}` — five tokens, and the split between
+them is structural, not a comment. `DENIES = {edit, execute}`, and no session has
+moved that. `resolve_worker_caps()` parses the `ATTESTOR_CAPS` env declaration and
+fails closed on anything absent, empty, non-`str`, or outside the closed vocabulary.
+`assert_read_only()` is a set comparison that fails closed on a leak **or** a gap — and
+on its own it proves nothing, because a set comparison against a constant can only fail
+if the set came from somewhere else. Which is why the second layer exists.
+
+**Observation** (`attestor/sandbox.py`): `probe_workspace_readonly()` attempts the
+forbidden write and reports what the kernel did. `EROFS` and `EACCES` are two
+spellings of "refused" and both count; `ENOENT`/`ENOTDIR` is `undetermined`, which is a
+failure flagged as one and never reported as safety. A refused write is **two different
+findings**, so the probe names which: `read_only_mount` (the D6 mechanism — a boundary
+the worker cannot lift) or `no_write_bit` (a permission on one inode, which whoever owns
+the directory can restore). Independently, `os.statvfs` is asked whether the mount
+holding the workspace is mounted read-only; that answer is `True`, `False`, or `None`
+for "we could not ask", and `None` is never rounded to `False`. **The write is the
+authority and the flag is only corroboration** — it is read after the write and cannot
+override it, so a workspace that accepted the forbidden write stays `writable`.
+
+`PolicyRecord` is the auditor fragment M9 embeds, now 10 keys: the capabilities, the
+two sets, `enforcement_applied`, `workspace_readonly`, `workspace_witness`, and the
+four added in Session 22 — `workspace_path` (the directory actually probed),
+`workspace_mechanism`, `workspace_mount_readonly`, `workspace_mount_witness`. It is
+frozen, clock-free and hashable, so repeated runs against one workspace agree. It is no
+longer environment-free: the same run on two machines produces different bytes here,
+which is an accepted cost of naming the workspace. `policy_record()` refuses to mint a
+record claiming enforcement without a proof, or carrying a denied capability on either
+path. `enforce_worker_read_only()` is the one worker-startup call, and it raises rather
+than returning, so a worker that cannot prove read-only never starts.
+
+**The N-worker fan-out in Stage 4 is N OS processes**, not model-invoked subagents
+(Figure 6's footer note; the fleet-flags string `--disable-subagents` vs the granted
+`subagent` cap is a known wording tension kept as-is from Session 7). **Never weaken
+this in demo shortcuts** (standing convention).
+
+**Unwired.** `app.attestor` is imported by `test_scaffold.py` and `test_policy.py` and
+by **nothing else** — no gate, orchestrator or router. §11.5 is the open item.
 
 ### 8.1 Addendum — Session 20 (M12): declaration vs observation
 
@@ -177,17 +222,28 @@ wired yet.
 2. `GET /api/runs*` and `GET /api/metrics` return hard-coded stubs; `db.get_db` / `write_artifact` have no callers.
 3. Gates return shape-correct stubs with empty payloads (`criteria: []`, `ast: []`, `findings: []`, `verdict: PENDING`).
 4. `watsonx_client.complete` is `NotImplementedError` past the key check — the integration pattern is now researched and specified in `docs/watsonx-integration.md`, but **no code has been written**.
-5. `assert_read_only` is test-only; pipeline never calls it. **Narrowed by Session 20 (M12), not closed:** the primitive now exists and takes its capability set from the worker's own declaration instead of a self-comparison, and `sandbox.py` adds a real read-only proof. Still zero callers — the worker-startup call is M7/M10's, the `attestor_policy` key in the emitted record is M9's. See §8.1.
+5. The read-only attestor is **built and unwired** (reworded 2026-09-27, Session 22;
+   the old text said "`assert_read_only` is test-only; pipeline never calls it", which
+   was true but described a set comparison rather than the real gate). `app.attestor`
+   has **zero product callers**: `enforce_worker_read_only()` exists, fails closed, and
+   is exercised only by tests. Two wirings are owed and **both are other modules' files**,
+   so M12 did not make them: M7/M10 call it at worker startup, and M9 embeds
+   `PolicyRecord.to_dict()` in the emitted record. The D6 read-only **bind mount** is
+   also absent — nothing in the repo creates one — though Session 22 made it attestable
+   (the record distinguishes a read-only mount from a missing write bit and reports
+   `ST_RDONLY`).
 6. §2 `_dist` path defect (three-level climb, should be two).
 7. Missing vs spec: GitHub write-back (comments + check runs), review-debt ledger, risk-weighted exposure decay curve, signed cross-file hash chain, SSE/polling, auth, real demo-repo target.
 8. Dependencies pinned in `backend/requirements.txt`: fastapi 0.135.3, uvicorn 0.44.0, pydantic 2.13.0, httpx 0.28.1, jsonschema 4.26.0, pytest 9.0.3, pytest-asyncio 1.4.0. Smoke tests in `backend/tests/test_scaffold.py` (pipeline stub path, policy guard, metric-empty) are the only coverage.
 9. **Dual-mode: the switch is built, the wiring is not** (found 2026-09-27 while reconciling Figure 6 — previously unrecorded). **Narrowed by Session 21, not closed.** `llm/__init__.py::select_client()` now reads `MOCK_LLM` and returns the right client, and a guard walks `backend/app` to prove nothing reaches a client except the switch — so `modules.md` rule 4 and AGENTS.md Convention 4 now have a selector to point at. **But no stage calls it:** M5 and M7b are both unbuilt, so `mock_client` remains unreachable from product code and the demo-survival rule still survives by accident rather than by design. Owner: **M5** (first consumer), then M7b. The remaining half is not a missing line but a missing *test on the consumer*: the durable control is M5 asserting which client it got, not the selector existing. See §7.
-12. **Stage 1 is real and completely unreachable.** Session 21's M4 landed a resolver that survives `..`, absolute paths, sibling-prefix paths, symlink chains, FIFOs, devices, NUL bytes, surrogate escapes and 5000-char components (verified across 3.11.9 / 3.12.14 / 3.13.14, ~240 cases) — and **not one of those is currently reachable, because `enqueue_run` mints a uuid and returns and `run_pipeline` has no product caller.** Recorded because it inverts the urgency: every finding in the M4 audit is latent, and each is cheap now and expensive to retrofit the moment M10 wires `enqueue_run → run_pipeline`, which is the next module in the chain. A stage that cannot be invoked has not been hardened by its own cleverness.
-13. **The read-only mount does not cover the process that reads the code.** M4's containment decision is made on a resolved path, so the durable control against a workspace mutated mid-run is a read-only mount — but the mount M10 provisions is specified for the **attestor worker (M7b)**, not for the API process, and Stage 1 runs wherever `run_pipeline` runs. M4 therefore describes its own limit rather than claiming M10's mount as its control: `ingest.py`'s docstring says so in as many words, and names the *name*-vs-*content* scope of a containment check (a hardlink inside the root is `measured`, correctly, because a hardlink has no target). **This is the withheld-`edit` theatre pattern one layer up** — naming a control that is not in force for the thing it is claimed to protect — and it is a live decision for M10 and M15, not a documentation nicety. Owner: **M10** (provision) + **M15** (`main.py`, the only owner of the lifespan).
+10. **The pydantic mirrors have zero product callers** (found 2026-09-27, Session 18). As of that session `app.models.schemas` is imported by `test_models_parity.py` and `test_schemas_contracts.py` and by **nothing else** — no gate, router, orchestrator or metric module uses it. M3 completed (5/5 parity, 100 tests green) but is not yet load-bearing; the models become real only when M4–M9 and M13/M15 construct and consume them. Related: the strictness added in Session 18 makes two paths that do not exist yet — reading a `write_artifact` envelope into `RunRecord` (`sha256` is not a contract key) and validating M9's record (a superset of `run.schema.json`) — require key projection first. Both are recorded in `modules.md` §M3 as M9/M14 obligations.
+15. **Stage 1 is real and completely unreachable.** Session 21's M4 landed a resolver that survives `..`, absolute paths, sibling-prefix paths, symlink chains, FIFOs, devices, NUL bytes, surrogate escapes and 5000-char components (verified across 3.11.9 / 3.12.14 / 3.13.14, ~240 cases) — and **not one of those is currently reachable, because `enqueue_run` mints a uuid and returns and `run_pipeline` has no product caller.** Recorded because it inverts the urgency: every finding in the M4 audit is latent, and each is cheap now and expensive to retrofit the moment M10 wires `enqueue_run → run_pipeline`, which is the next module in the chain. A stage that cannot be invoked has not been hardened by its own cleverness.
+16. **The read-only mount does not cover the process that reads the code.** M4's containment decision is made on a resolved path, so the durable control against a workspace mutated mid-run is a read-only mount — but the mount M10 provisions is specified for the **attestor worker (M7b)**, not for the API process, and Stage 1 runs wherever `run_pipeline` runs. M4 therefore describes its own limit rather than claiming M10's mount as its control: `ingest.py`'s docstring says so in as many words, and names the *name*-vs-*content* scope of a containment check (a hardlink inside the root is `measured`, correctly, because a hardlink has no target). **This is the withheld-`edit` theatre pattern one layer up** — naming a control that is not in force for the thing it is claimed to protect — and it is a live decision for M10 and M15, not a documentation nicety. Owner: **M10** (provision) + **M15** (`main.py`, the only owner of the lifespan).
 11. **Figure 6 asserts three things that are false, and cannot be regenerated** (found 2026-09-27, Session 18, while documenting the M1 contracts work).
     - The **Contracts (M1)** box reads "5 JSON Schemas (draft-07)" and "validator covers 2 of 5 pairs". The truth is **6 schemas and 6 pairs**, all covered and enforced.
     - The **Exposure (M9)** box reads "NOT built — exposure schema has no PAIRS entry". That orphan is exactly what Session 18 closed: `exposure.schema.json` now has `contracts/examples/exposure.json` and a `PAIRS` entry. The box is the thing that is wrong, not the code.
     - The generator §1 refers to, `gen_fig6_architecture.py`, **is not committed on any branch**, so the figure can be neither regenerated nor audited mechanically.
+    - **The Attestor (M12) box is also stale, and Session 22 widened the gap.** It shows the four harness groups only; there are five grants (`llm_egress` is the fifth), and the module has a second file the figure has no shape for at all — `attestor/sandbox.py`, the write-probe that turns the read-only claim into an observation. Per the Session 18 rule, **any module that changes a number or a component count the figure prints owes this same audit**, and M12 has now paid that twice: once for the fifth grant, once for the second file.
     By this file's own precedence rule the figure is wrong and the docs are right. The fix is to recover or rewrite the generator and re-run the line-by-line sourcing audit that Session 16 established — **not** to hand-edit the PNG. Owner: unassigned; owed before the figure is shown to anyone.
 
     > **Numbered 11, skipping 10, on purpose.** The open `receipt-renderer` branch
@@ -197,7 +253,60 @@ wired yet.
     > PR #26 lands**: the merged list reads 1–9, 10 receipt, 11 figure. Taking 10
     > here instead would have put two entries at 10 on merge — the same collision
     > this list already had to arbitrate once on that branch, where gaps 9 and 10
-    > both claimed slot 9. If PR #26 is closed unmerged, reclaim 10 for this entry.
+    > both claimed slot 9.
+    >
+    > **SUPERSEDED at the merge of `tests` into `main` (Session 19).** Slot 10 was not
+    > free after all: the merge base carried a numbered gap 10 — "the pydantic mirrors have
+    > zero product callers" — which had been dropped from this list without comment. It is
+    > still true (nothing outside `test_models_parity.py` and `test_schemas_contracts.py`
+    > imports `app.models.schemas`), so it is **restored as 10** rather than lost. The
+    > merged list reads 1–9, 10 mirrors, 11 figure, 12 enum enforcement.
+    > **PR #26's receipt gap must take 13, not 10** — taking 10 again is the collision this
+    > note exists to prevent.
+
+12. **The mirrors' enum enforcement has no regression guard** (found 2026-09-27, Session 19, verification-only; **partly closed Session 21**). `app/models/schemas.py` is documented in its own docstring as "the STRICT trust layer… these are the shapes a verdict rests on", and `EvidenceTier` / `Verdict` are `Literal`s, so the models *do* reject out-of-enum values today (verified: `evidence_tier="EVERYTHING_IS_FINE"` and `verdict="PROBABLY_FINE"` both raise `ValidationError`). What is missing is the test that would notice if they stopped: `test_schemas_contracts.py` pins the two type **aliases** through `typing.get_args`, and `test_models_parity.py` pinned field **names** — so the alias→field wiring was asserted by neither. Re-typing `CriterionVerdict.evidence_tier`, `CriterionVerdict.verdict` or `TraceabilityLink.evidence_tier` from its `Literal` to `str` passed the whole suite. **This is a missing guard, not a live defect** — recorded here because §11.10 already says the mirrors are not yet load-bearing, and a silently-accepted `evidence_tier` is exactly the fail-open posture `modules.md` rule 6 forbids.
+    **Session 21** closed the identical hole for the fourth enum field, `Finding.probe` (added with the M1 `findings` contract), by pinning both the annotation and the runtime rejection — mutation-verified, since de-typing `probe` to `str` had survived. **The three original fields remain unguarded**; the pattern to close them is now in `test_models_parity.py` and is one line per field. Owner: M3 or M17, unassigned. The "100 tests" figure in the paragraph above is the count **as of Session 19** and is preserved as history — the suite is now **118**.
+
+13. **RESERVED** — for PR #26's `receipt-renderer` gap ("implemented but unwired"), per the note under §11.11. Not taken.
+
+14. **No transitive dependency is pinned, so no green CI run is reproducible** (found 2026-09-27, Session 21). `backend/requirements.txt` pins seven **direct** dependencies; everything they pull in floats. The measured case: **`starlette` is not listed at all** — it arrives via fastapi — and the 3.11.9 machine environment had **1.0.0** while a fresh `requirements.txt` install on 3.12.14 / 3.10.21 / 3.14.7 resolved **1.7.0**. Two consequences, in increasing order of seriousness:
+    - Every session record in this file that cites *"green on 3.11.9 and 3.12.14"* was, in dependency terms, **two different stacks** — not one suite proven twice.
+    - Each CI run re-resolves transitives, so this week's green and last week's green are not evidence about the same set. A future break can arrive with no code change at all.
+    The only symptom available today is a **warning count**: `StarletteDeprecationWarning` appears on 3.10/3.12/3.14 (starlette 1.7.0) and not on 3.11.9 (1.0.0). That is the canary, and it is how this was found — recorded because the honest fix is a **decision** (add explicit transitive pins, or commit a lockfile), not a patch, and because it should be settled **before** the branch is pushed rather than after the first mystery CI failure. Details and the four-interpreter table in `docs/test-suite.md`.
+
+    **CLOSED 2026-09-27 (Session 21 follow-up, on explicit user instruction).**
+    `backend/requirements.txt` now pins **all 23 transitive dependencies** beneath the
+    unchanged 7 direct pins. The set was frozen from a clean 3.12.14 install and verified
+    byte-identical on 3.14.7; four lines carry `python_version` markers because that is
+    where pip genuinely diverges by interpreter (`backports.asyncio.runner`,
+    `exceptiongroup`, `tomli` exist only below 3.11; `rpds-py` moved its floor, so 3.10
+    takes 0.30.0 while the rest take 2026.6.3). A flat freeze with no markers would **not
+    install on 3.10** — the markers are load-bearing, not decoration. Proven by deleting
+    all four venvs and rebuilding from THIS file, including a **brand-new clean 3.11.9
+    venv** that replaces the polluted global env as the reference leg: 118 passed +
+    validator exit 0 on 3.10.21 / 3.11.9 / 3.12.14 / 3.14.7, with the 3.11/3.12/3.14 stacks
+    byte-identical and 3.10 differing by exactly the four marked lines.
+    **Ownership note:** `requirements.txt` is M17's exclusive file (`modules.md` §0.4)
+    and was edited here on the user's direct instruction to do §11.14 now — M17 to
+    review and adopt. The remaining warning-count skew after pinning (13 on 3.14 vs 14
+    elsewhere) was chased to source and is **benign**: `test_schemas_contracts.py:35`
+    annotates a helper `-> jsonschema.RefResolver`, and **PEP 649** (deferred annotation
+    evaluation, new in 3.14) means the annotation is never evaluated at `def` time on
+    3.14 — proven with a probe script (`/tmp/opencode/pep649_probe.py`: 1 warning on
+    3.12, 0 on 3.14 for the identical `def`). The annotation is never introspected, the
+  function behaves identically, and the real runtime access at line 40 still warns on
+  all four legs. Recorded because a count difference gets a source, not a shrug.
+
+15. **The tree is red on arrival from the M2 merge — one failure, not M14's**
+    (found 2026-09-27, Session 22, while verifying M14).
+    `fixtures/demo_traceability.json` now carries `E4`/`E2` (landed via PR #43,
+    M2-fixture) while
+    `test_models_parity.py::test_demo_traceability_fixture_loads_into_model`
+    still expects `E0`. Either the fixture regressed or the assertion is stale;
+    deciding is M2's (fixture) + M3's (test) job — both files sit outside M14's
+    ownership (`modules.md` §0.4), so this session neither fixed nor silenced it
+    (rule 8, Convention 6). M14 verified *around* it: 39/39 M14 tests green on
+    3.11.9 + 3.12.14, validator exit 0 on both. Owners: M2 + M3.
 
 ## 12. Monorepo layout (as on disk)
 
@@ -217,10 +326,10 @@ backend/app/routers/{webhooks,runs,metrics}.py
 backend/app/gates/{ingest,extract,parse,verify,adjudicate,emit}.py
 backend/app/orchestrator/{pipeline,jobs}.py
 backend/app/llm/{watsonx_client,mock_client}.py
-backend/app/attestor/policy.py
+backend/app/attestor/{policy,sandbox}.py
 backend/app/metrics/false_certified.py
 backend/app/models/schemas.py
-backend/app/store/artifacts.py
+backend/app/store/{artifacts,records}.py
 backend/tests/test_scaffold.py
 contracts/*.schema.json  contracts/examples/*.json
 fixtures/demo_*.json  scripts/validate_contracts.py
@@ -549,6 +658,7 @@ was correct throughout; the drift was entirely in prose. All ten are now correct
   Recorded as §11 gap 11 (slot 10 reserved for PR #26's receipt gap, so nothing renumbers
   on merge).
 
+
 ### 2026-09-27 — Session 19: M2 demo corpus (fixtures as-built)
 
 - **Code, 6 files, committed as `88095b2`.** No product code, no router, no contract, no
@@ -609,3 +719,345 @@ was correct throughout; the drift was entirely in prose. All ten are now correct
   `--disable-subagents` vs granted-`subagent` wording tension (kept-as-is since Session 7), and the
   `HARNESS_GROUPS`/`OS_PROPERTIES` split is a forcing function rather than architecture — no code
   branches on it.
+
+### 2026-09-27 — Session 19: verification of the M3 parity suite (no code change)
+- Instruction: *"verify all the new tests added"*. Scope = the 21 tests added at
+  Session 18. **This session changed no product code, contract, fixture, test,
+  dependency or endpoint.** HEAD `c78df43` before and after; the tree is clean,
+  which also means Session 18's note that Sessions 16/17 left *uncommitted* log
+  appends here and in `modules.md` is now stale — those landed in `c78df43`.
+- **Verified:** 100 passed on **3.11.9 and 3.12.14**, validator exit 0 on both,
+  `79 + 21 = 100` confirmed by per-file collection counts, tree unpolluted.
+- **Parity recomputed independently of the test's own helpers** (AST rather than
+  `inspect`, direct contract glob) so a shared bug could not hide in both: 5
+  contract titles, 6 mirrors, 1 strict base, `TraceabilityLink` the only model
+  with no titled contract. The 5/5 claim holds.
+- **13 mutations against a throwaway copy per mutation; 11 killed.** The parity
+  bijection, the self-invalidating `INLINE_MIRRORS` exception, `extra="forbid"`,
+  Criterion's mandatory fields, contract-gains-a-property coverage,
+  `by_operator` typing, the honesty pin, the inline link shape and the
+  `locations` default all fire. Both survivors were re-checked by hand and were
+  harness artifacts — a missed collection-time `ImportError`, and an equivalent
+  mutant (pydantic 2.13 deep-copies mutable defaults, so a bare `[]` default is
+  not a bug).
+- **Added gap §11.12:** the mirrors' enum enforcement has no regression guard.
+  The aliases are pinned, the fields that use them are not, so re-typing
+  `CriterionVerdict.evidence_tier` / `.verdict` or `TraceabilityLink.evidence_tier`
+  to `str` passes all 100 tests. Product code is correct today; the guard is
+  missing. Belongs in §11 rather than only in the test record because §11.10
+  already concedes the mirrors are not load-bearing, and this is a hole in the
+  trust layer's stated guarantee.
+- **A second finding stayed in the test record:** `test_models_parity.py`'s
+  `_contracts_by_file` docstring says the file name and `title` disagree for
+  *one* contract; it is *three* (`run`, `traceability`, `verdict`). Code
+  correct, rationale wrong. Left unfixed — fixing it is a code change.
+- **New pattern: a survivor is a question, not a verdict.** Both non-kills were
+  resolved by reading pydantic and pytest source rather than by reporting or
+  silently dropping them, extending Session 16's rule that a guard never seen
+  failing is not a guard, and Session 18's that guards must be proven to fire.
+  The corollary now recorded: **an audit script that reports a survivor owes a
+  hand-check before it is written down** — a harness that only matches
+  `file::test` IDs will mis-report a collection error as a weak guard, which is
+  how a real gap gets buried under a false one.
+- **Process note, recorded because it nearly went unnoticed:** the first attempt
+  at the §11.12 append anchored on a mid-line substring. The edit tool matched
+  loosely and replaced the whole surrounding clause with whitespace, deleting
+  half of §11.10. Caught only because the append was checked for deletions
+  rather than assumed additive; `git checkout` restored it and the append was
+  redone as a line-boundary insertion. **A file that is "only being appended to"
+  is not automatically append-only** — verify the diff, and anchor on line
+  boundaries.
+- **Open at archive:** unchanged from Session 18 — 17 of 18 modules remain,
+  **Wave 0 (M1, M11, M12) still unbuilt and still gates Wave 1**, D1–D13
+  unsettled, M1's two requests outstanding, module ownership unassigned. New
+  this session: the §11.12 guard needs a negative assertion and the comment fix
+  needs an owner (M3 or M17 — `test_models_parity.py` is M3-exclusive,
+  `backend/tests/` is M17's). Per `modules.md` rule 10 and the Session 16
+  precedent, `modules.md` was deliberately **not** edited.
+
+### 2026-09-27 — Session 20: merge `origin/main` into `tests` (conflict resolution)
+- **Instruction:** *"resolve git merge conflict"*. A merge of `origin/main`
+  (`25c76a7`, 8 commits) into `tests` (`dea1321`) was already in progress with the
+  two doc conflicts staged as resolved. **This entry records the resolution; it
+  changed no product code.**
+- **What the conflict actually was:** both branches appended a Session entry to
+  the same tail of `docs/architecture.md` and `docs/test-suite.md` — ours
+  *"Session 19: verification of the M3 parity suite"*, theirs *"Session 18: M1
+  contracts — orphan schemas closed, findings added"*. Purely additive on both
+  sides, so the correct resolution was to **keep both**. Verified in the index
+  before committing: all four Session logs (13, 18-M3, 18-M1, 19) are present and
+  the stage-resolved files carry no conflict markers.
+- **A §11 renumbering fell out of the merge, and is correct.** `origin/main` added
+  its own gap 11 (*"Figure 6 asserts three things that are false"*), so the
+  Session 19 enum gap was renumbered **11 → 12**. No stale `§11.11` reference
+  survives in any of the three records — `AGENTS.md` and both doc files all read
+  §11.12. Verified by grep, not by eye.
+- **Restored a corrupted working tree.** The staged resolution was clean, but the
+  working tree had raw three-way conflict-marker fences re-injected on top of
+  both doc files — `git status` read *"All conflicts fixed"* while the files on
+  disk still held markers. Left alone, a `git add .` would have committed them.
+  Fixed with `git restore --worktree` (from the **index**, not `HEAD`, so the
+  merge resolution itself was preserved), then re-grepped for markers. Backup of
+  the pre-fix tree and `.git` at `/tmp/opencode/merge-2026-09-27/`.
+- **The merged tree is NOT green, and that is the merge's real output.** Both
+  branches were green alone; together they are **112 tests, 109 pass, 3 fail**:
+  `test_contract_model_parity_is_a_bijection`,
+  `test_model_fields_cover_contract_properties[Finding]` and
+  `test_required_contract_fields_are_model_fields[Finding]`. Cause: M1 landed
+  `contracts/findings.schema.json` (title `Finding`, 5 required properties) and
+  M3's `app/models/schemas.py` has no `Finding` mirror — `backend/app/models/schemas.py`
+  is M3's exclusive path (`modules.md` §0.4), and no session on either branch
+  wrote it. **This is the parity test working exactly as designed**, whose own
+  docstring says the failure is *"the contracts-first rule working — do not
+  suppress it, mirror the schema."* It is **not** a test bug and must not be
+  silenced (`modules.md` rule 8). Fix = add the `Finding` mirror; owner M3.
+- **Counts in this file are now branch-relative, not absolute.** "100 tests / 79 +
+  21" was true on `tests` and is preserved as the historical record; after the
+  merge the total is **112** (79 baseline + 10 from M1's contracts guard + 21
+  from M3's parity suite + 2 from `Finding` joining the parametrized set).
+  Historical entries were **not** rewritten — a record that was true when
+  written stays true; this entry carries the new number.
+- **Conventions:** `scripts/validate_contracts.py` is green at **6/6 schemas**
+  (M1 extended `PAIRS` from 5 to 6 and added `contracts/examples/*.json`), so the
+  contract side of the merge is complete — only the pydantic mirror lags.
+- **Open at archive:** unchanged otherwise — 17 of 18 modules, Wave 0 still
+  unbuilt. New: the `Finding` mirror is now a hard blocker for a green tree, and
+  the merged count (112) needs to reach the `Status:` line and `§12` layout
+  count, which still say 11 test files / 100 tests.
+
+### 2026-09-27 — Session 21: the `Finding` mirror, four interpreters, and a reproducibility gap
+- Instruction: *"analyze the code base, make sure that it pass the tests"*, then extended
+  to *"verify the tests suite as well because it uses different python version instead of
+  sticking to 3.12.14"*. Session 20's open item — "the `Finding` mirror is a hard blocker
+  for a green tree" — is **closed**.
+- **Tree green: 112 → 118.** Added `Probe` (5-value `Literal`) and `Finding` to
+  `backend/app/models/schemas.py`, the M3-exclusive file, so the fix landed in the module
+  that owns the claim rather than as a merge side-effect. `Finding` has **no defaults** on
+  its five required keys, keeps `result` **unenumerated** (M7's vocabulary), and carries
+  **no `evidence_tier`** — D1 is unratified and `contracts/findings.schema.json` forbids it
+  in its own `description`. The module docstring's "five draft-07 schemas" corrected to
+  **six**. Contract parity is now **6/6**, and `docs/modules.md` §M3's "5/5" is stale for
+  the same reason (left for M3's owner per rule 10).
+- **Convention 6 honoured:** the three red tests were fixed by adding the model the test
+  demanded. Nothing was skipped, weakened, or deleted, and the count went **up**.
+- **Convention 7 applied to the new mirror, and the harness was wrong first.**
+  `/tmp/opencode/finding_guard_proof.py` initially reported **7/7 mutations killed — all
+  false**: it passed bare filenames to pytest, which exits **4** ("no tests ran"), and
+  `rc != 0` scored as a kill. Caught only because 7/7 contradicted a prediction of 4
+  survivors. With correct paths and a **control run** added, the true result was **3/7
+  killed, 4 survived** — the four being real gaps in code written minutes earlier: the
+  `probe` enum wiring, the no-defaults asymmetry, the D1 "do not add a tier" instruction,
+  and "keep `result` unenumerated". All four are now closed by 6 new tests in
+  `test_models_parity.py`; re-proven **7/7 killed, 0 survivors**, plus 2 extra mutations
+  showing the bijection's *"only in models"* branch is independently live. **A collection
+  `ImportError` is scored separately** from an assertion failure — the module imports
+  `Finding` by name, so a rename dies there first, which is a *stronger* guard (Session
+  19's trap, inverted).
+- **Four interpreters, not one — and the comparison is what found the bugs.** Each leg
+  used a venv built from the exact `requirements.txt` pins: **3.10.21** (documented
+  dependency floor, not in the matrix), **3.11.9** (matrix leg 1), **3.12.14** (matrix leg
+  2, matches `backend/.python-version`), **3.14.7** (forward-compat leg, not in the
+  matrix). **118 passed on every leg, validator exit 0 on every leg.** **3.13 has no
+  interpreter on this machine and is unverified** — recorded, not glossed.
+- **Two findings no single-version run would have produced:**
+  1. **A real forward-compat defect in the suite, fixed.** 3.14 alone emitted
+     `DeprecationWarning: 'asyncio.iscoroutinefunction' … slated for removal in Python
+     3.16`, and the source is **our own `test_pipeline.py:69`**, not a dependency. Swapped
+     to `inspect.iscoroutinefunction` after confirming the two cannot disagree here
+     (`jobs.worker` is a plain `async def`, no `markcoroutinefunction`). The §11.1
+     characterization is unchanged; only the deprecated call is gone.
+  2. **New §11.14 — nothing transitive is pinned, so no green run is reproducible.**
+     `starlette` is absent from `requirements.txt` (it arrives via fastapi) and measured
+     **1.0.0 on 3.11.9** against **1.7.0 on all three fresh installs**. The only symptom
+     was a warning *count* — 13 on 3.11.9, 14 on the rest, from
+     `StarletteDeprecationWarning`. Consequence: every *"green on 3.11.9 and 3.12.14"*
+     claim in this file's history was two different dependency sets, and consecutive CI
+     runs are not comparable. **Decision owed** (pin transitives, or commit a lockfile),
+     ideally before the branch is pushed.
+- **A correction to Session 20's own note.** It recorded that the `Status:` line and the
+  `§12` layout "still say 11 test files / 100 tests". **Neither ever said that** — the
+  `Status:` line carried no test count, and `§12`'s tree block lists only
+  `backend/tests/test_scaffold.py` with no count. The stale "100 tests" lives in **§11.10
+  and §11.12**, which are point-in-time gap entries. `Status:` has been refreshed anyway
+  (now carrying the four-interpreter result and a pointer to §11.14), and §11.12's figure
+  is marked as history rather than rewritten. **Ninth documented instance of a doc in this
+  repo being wrong about the code** — and the first where the error was in a *session log*
+  rather than a claim about the system.
+- **Also fixed:** `_contracts_by_file`'s docstring in `test_models_parity.py` claimed the
+  file-name/`title` disagreement was one contract; it is **three** (`run`, `traceability`,
+  `verdict`). Recounted from source rather than trusting Session 19's note — the note was
+  right, the comment was not. **Eighth instance**, same family.
+- **Repo tree clean** apart from the three intended files; every
+  `__pycache__`/`.pytest_cache` is gitignored (Convention 3). Remaining warnings are
+  pre-existing and each is a **decision**, not a fix: `jsonschema.RefResolver` (D10),
+  `StarletteDeprecationWarning` (dependency change), and starlette's own advice to install
+  `httpx2` — which is **not installed on any leg**, so `AGENTS.md`'s "(on `httpx2`)"
+  phrasing is worth reading as the warning's text rather than as a fact about the env.
+- **Open at archive:** §11.12's three original enum fields still unguarded (the closing
+  pattern is now in the file, one line each); §11.14's pinning decision; the CI matrix
+  width decision (3.10 and 3.14 are green but unenforced, 3.13 unverified); `modules.md`
+  §M3's "5/5 parity" now stale; and — unchanged by all of the above — **16 of 18 modules
+  remain, the mirrors still have zero product callers (§11.10), and Wave 0 (M1, M11, M12)
+  still gates Wave 1.** M1 was in fact built at Session 18, so Wave 0 is down to **M11 and
+  M12**. Nothing in this session moved the critical path; it made the existing claims
+  trustworthy enough to build on.
+- **Follow-up the same day (user instruction: §11.14 now, §11.12 when unblocked):** the
+  pinning decision is **taken** — §11.14 above is marked CLOSED with the evidence. The
+  §11.12 guards remain open per the instruction, owner still unassigned.
+
+### 2026-09-27 — M12: the attestor policy fits the architecture it is in
+
+> **Heading relabelled, content untouched.** This entry was "Session 22" until the merge
+> that unblocked PR #48: `main` independently carries *"Session 22: M14 persistence"* and
+> *"Session 23: verification round archived"*, and two entries sharing a number in one log
+> is a legibility defect in a record whose premise is that claims must be checkable.
+> Numbering dropped per `AGENTS.md` Convention 18 (cite date + module). **Prose inside this
+> entry still says "Session 22"** and means this same entry — deliberately not swept, to
+> keep the diff small in a file with an incoming merge conflict. A recorded inconsistency
+> rather than a silent one.
+
+- Instruction: *"I am working on the M12 attestor read-only policy. The llm layer is only
+  using mock data for it, because there have been changes"*, clarified to *"update m12 to fit
+  the current system architecture."* Scope was agreed as three named changes before any code
+  was written: **A** attest the D6 mechanism, **B** let the record name the workspace,
+  **C** close the ungated leak. `llm_egress` decided explicitly — keep, and record that
+  nothing exercises it yet.
+- **§8 was two sessions stale and this session found it by reading code, not docs.** The
+  section claimed `GRANTS = {read, subagent, skill, workflow}` and described
+  `assert_read_only` as the whole module. On disk were five grants (with `llm_egress`
+  split structurally into `OS_PROPERTIES`), a second file `sandbox.py` that this file's
+  §12 layout did not list, a capability resolver, a `PolicyRecord` type, and
+  `enforce_worker_read_only`. **None of it had a session-log entry in any doc.** Recorded
+  as a finding reconstructed from source, not as an entry attributed to a session that did
+  not write it. §8, §3's component row, §11.5 and §12 are corrected; `watsonx-integration.md`
+  §6 gets a dated supersession note instead of a rewrite, since it is a research snapshot
+  and this file is the as-built authority.
+- **§11.5 reworded rather than closed, and the distinction matters.** The old text —
+  *"`assert_read_only` is test-only; pipeline never calls it"* — was true and misleading:
+  it described a set comparison when the ungated thing is now a real gate that proves a
+  workspace read-only. `app.attestor` still has **zero product callers**, so the gap does
+  not close. What changed is that the gap is now two named wirings in two other modules'
+  files (M7/M10 at worker startup, M9 embedding the fragment) rather than one missing call.
+- **What actually changed in the code, in one line:** a refused write is two findings and
+  the module said one. `EROFS` (a read-only mount — the D6 boundary) and `EACCES` (a
+  permission on one inode, which its owner can restore) produced the same record, so the
+  probe now names the mechanism and reports the mount's own `ST_RDONLY` answer beside the
+  errno. **The write is the authority; the flag is corroboration and is read after it.**
+  Getting that order wrong would report a workspace read-only immediately after it
+  accepted a write, so it is pinned by a test that makes the write land and the flag lie.
+- **`PolicyRecord` gained four keys** (`workspace_path`, `workspace_mechanism`,
+  `workspace_mount_readonly`, `workspace_mount_witness`), 6 → 10, none renamed or dropped
+  (rule 3). `workspace_mount_readonly` is deliberately three-valued: `None` means "we could
+  not ask" and is never rounded to `False`. **Accepted cost, stated in the code:** the
+  fragment is no longer environment-free, so the same run on two machines differs here.
+- **A real hole, closed.** The ungated record path never consulted `DENIES`, so it would
+  mint a record whose `capabilities` was `["edit"]` while its own `denied` said
+  `["edit","execute"]`. Both paths refuse now. The check was deliberately not extended to
+  completeness — an ungated record legitimately reports a partial set.
+- **Rules honoured deliberately:** rule 7 — no gate, orchestrator, contract, fixture,
+  dependency or `pyproject.toml` file was touched, so the two owed wirings are *requests*,
+  not edits; rule 10 — three guards flipped in the same change, each labelled
+  `CHANGED THIS SESSION`; rule 12 — `os.statvfs` is stdlib, zero new pins; rule 13 —
+  every new test writes under `tmp_path`, and the 0555 fixture still restores its mode.
+- **A false claim in `test_policy.py` and a test that overstated itself, both fixed rather
+  than left.** The module docstring claimed *exactly one* test substituted the OS call;
+  there are now five interactions substituted. The inventory was recounted from the file,
+  and the first draft of that recount said three `statvfs` substitutions where there are
+  four — corrected before it was written down. Separately,
+  `test_the_two_readings_are_reported_separately_not_collapsed` described a contrast
+  between two deployments and asserted one; it now makes both readings and asserts they
+  differ.
+- **Owed, not done:** the D6 **read-only bind mount** — nothing in the repo creates one,
+  owner M10; the two wirings above; the Figure 6 attestor box, now stale in two more ways
+  (§11.11) and still unregeneratable; `AGENTS.md`'s session history, which is **six
+  sessions stale** (ends at Session 15) and is updated only by `/end`.
+- **Verification, same session.** **192 collected, 191 passed**, identical on **3.11.16,
+  3.12.14 and 3.14.7** — both CI-matrix legs had to be provisioned fresh, since neither
+  interpreter was installed on the box and a 3.14 result is not a pass by this repo's own
+  rule. Validator exit 0 on every leg. `test_policy.py` **75 passed, 0 skipped** (baseline
+  63, so +12). Run as uid 1000, so all 21 root-guarded cases executed rather than skipping
+  — the errno/`EACCES` behaviour this change depends on was genuinely exercised. Zero
+  residue, source tree byte-identical before and after. **All seven guards mutation-proven,
+  no survivors**, including the fail-open inversion, which died on the guard's own message
+  rather than incidentally.
+- **The one failure is not this session's and is not "unfinished work".**
+  `test_models_parity.py::test_demo_traceability_fixture_loads_into_model` asserts
+  all-E0 links while M2's merged fixture (`88095b2` → `4b03c55` = HEAD) set E4/E2. It is a
+  **missed test-guard flip in that merge** — `test_schemas_contracts.py` was updated,
+  `test_models_parity.py` was not — and it is **two** stale assertions, not one. Proven
+  pre-existing by running a pristine `git archive HEAD` extraction: `1 failed, 179 passed`
+  with M12 absent. **Deliberately not fixed here:** `test_models_parity.py` is M3's file and
+  the fixture is M2's, so repairing it from this session would be a two-owner edit (rule 7).
+  It also will **not** clear itself when other work finishes, which is the one part of the
+  "still unfinished" framing that does not hold — filed in `test-suite.md` for its owner.
+- **A harness bug recurred, and that is the more useful finding.** The mutation harness's
+  first scoring of M3 was a **false kill**: renaming an imported constant breaks
+  *collection* (pytest exit 2, zero tests collected), and a `rc != 0` check would have
+  counted it. **Session 21's first harness reported 7/7 false kills for the same reason.**
+  Only the control run exposed it, both times. Convention 7's control run is not
+  ceremony — it is the only thing standing between this suite and a permanently green lie.
+- **Delivery: `936db35`, PR [#48](https://github.com/baronocasiones/Intent-Gate/pull/48)
+  OPEN** from `m12-attestor-policy` against `main`, 8 files, 1003 insertions / 70
+  deletions. Working tree clean, `HEAD` == `origin/m12-attestor-policy`, upstream set.
+- **This file is one of the two that block the merge, and that is structural.** `main`
+  moved to `bf52608` (M14, #47) and both sides append a session entry to this log's tail;
+  the rebase was attempted and **aborted** on append-vs-append, leaving `936db35`
+  byte-for-byte intact. **Resolution is "keep both entries"** — and the second half of that
+  is not a formality: `main` carries entries titled *"Session 22: M14 persistence"* and
+  *"Session 23: verification round archived"* while this branch's entry is *also* "Session
+  22", so a naive keep-both interleaves them out of date order and implies a sequence that
+  did not happen. **The session-numbering scheme does not survive parallel work and needs a
+  decision before the next few sessions land** — this is its third cost this month, after
+  the unlogged M12 landing and this conflict.
+- **Correction to a claim three sessions of logs have been repeating.** Session 15
+  recorded *"no credential helper and no `gh` in this environment, so no PR exists yet and
+  write access for `Cody-me` is untested."* **All three parts are false.** `gh` 2.101.0 is
+  installed at `/home/cody-laptop/.local/bin/gh` and only **not on `PATH`** — which is
+  exactly why `which gh` reported it missing and the absence was believed. A URL-scoped
+  helper exists (`credential.https://github.com.helper` → that absolute path), so git
+  authenticates without `gh` on `PATH` at all. **Write access for `Cody-me` is tested and
+  confirmed** — `git push --dry-run` exit 0, then PR #48 opened. Generalised, because it
+  will recur: *absence detected by a probe is not absence.* A `which`-style check proves
+  only that `PATH` failed to resolve it, and three sessions inferred "no gh" from that.
+- **Provenance of the M12 baseline, for the record:** commit `9c7343d` by `Aixxn
+  <adrianazures6@gmail.com>`, merged as PR #42 off `M12-attestor`, containing
+  `sandbox.py`, the fifth grant and 63 tests. It reached `main` as a *side effect* of #43
+  merging first (#43's branch had `9c7343d` as its parent), which is why it is absent from
+  main's first-parent chain and why two PRs show one landing. So `main` carries this
+  module's code with **no doc record of it anywhere** — the Session 22 entries in the three
+  files that own each concern are the first and only.
+
+
+> **Merge point — both entries below are from parallel sessions on the same date, and
+> their order here is not a claim about sequence.** The M12 entry (above) and the M14 /
+> verification entries (below) were both branched from `4b03c55` and developed
+> concurrently; the merge resolved append-vs-append on this log's tail, purely additive,
+> zero context lines, `comm -12` showing no line changed on both sides. **Both are kept
+> whole — nothing from either session is dropped.** They are placed M12-first because that
+> is the lower-risk edit inside an already-conflicted file, not because M12 happened first.
+> M14's own merge rehearsal predicted this conflict and named the Session 20 remedy, so the
+> two sessions independently arrived at "keep both". **The numbering scheme is still owed a
+> decision** (`AGENTS.md` Convention 18): `main` labels these "Session 22" and "Session 23"
+> while M12's is deliberately unnumbered, and no global sequence survives parallel work.
+
+### 2026-09-27 — Session 22: M14 persistence (db + artifacts) implemented
+- **Implemented:** `backend/app/db.py` rewritten (env-wired `get_db` via `_sqlite_path`, `now_iso`, `idx_runs_created_at`, `save_run`/`set_status` holding the commit, `get_run`/`list_runs`); `store/artifacts.py` extended (`prev_digest` D8 seam, payload-first envelope ordering, `artifact_path_for`); new `store/records.py` (`read_artifact`, `project_run_payload`, `read_run_record` — discharges §M3 obligation 1 and is the first product caller of the mirrors). `config.py` untouched (M11's file); no contract, fixture, endpoint, or dependency changed. **Zero existing test flips.**
+- **D15 verdict (user-confirmed):** the `prev_digest` seam stays, explicitly PROPOSED + UNCONTRACTED, guarded by a self-invalidating test that fails when M1 contracts the envelope (the Session-18 `INLINE_MIRRORS` pattern). CWD relativity accepted + recorded in §6. Malformed artifacts raise per the `sandbox.py` posture; `None` only for missing.
+- **Verified (via subagent — bash denied this session):** 209 passed + 1 pre-existing failure on **3.11.9 and 3.12.14** (clean venvs from `requirements.txt`); validator exit 0 (`OK 6/6`) both legs; all 5 M14 guards mutation-proven lethal (`/tmp/opencode/m14_guard_proof.py`, scratch copies only, all deleted); repo tree unpolluted. The 1 failure is §11.15 (M2 fixture drift from PR #43) — recorded, not fixed, not silenced.
+- **Counts:** suite is 210 (was 118 at Session 21 — `main` moved: M2-fixture PR #43, fix PR #46); M14 contributes 39 (32 in `test_store_db.py`, 7 in `test_store_records.py`). §6 rewritten as-built; §12 store line updated; §11.15 added.
+- **Flagged, not fixed (not M14's files):** `modules.md` §M12 + its §0.2 path row still omit `attestor/sandbox.py` and still say "enforced in tests only" — the 10th doc-vs-code instance; M12's owner to reconcile. Branch is `m14-persistence` @ `4b03c55` (= `main`); commit pending user go.
+- **Open at archive:** AC 1's remainder (M10 writes, M15 reads — the seam is provided); §11.15 (owners M2+M3); everything from Session 21 still open (M11, M12, D1–D13 sans the D15 seam, ownership unassigned).
+- **Follow-up the same day (verification round — audit the tests against their claims, then commit if changed):** the audit found **3 weaknesses in `test_store_db.py`** (no product code touched): a **vacuous** key-order test that hashed stdlib dumps instead of calling `write_artifact`; an index guard that pinned the index *name* but not its *target column* (`ON runs(id)` would have passed); and a `list_runs` test whose expectation `ccc,bbb,aaa` is satisfied by `created_at DESC`, `id DESC`, *and* the tiebreak — incapable of detecting a wrong-column sort. All three fixed; the new order test uses a **mocked clock + reverse-sorted ids** so the candidate orderings disagree deterministically. M14 count **39 → 40**; re-verified 210 passed + the same §11.15 failure on **both** interpreters, validator exit 0, and — the piece that makes the fixes trustworthy — the red test **re-proven pre-existing on parent `4b03c55`** via throwaway worktree, plus a fresh **9/9 mutation kill** (control green, failing test id reported per mutation, zero survivors) in which each of the three repaired guards was seen failing before it was trusted.
+
+### 2026-09-27 — Session 23: verification round archived; merge rehearsal
+- **Commits landed.** Session 22's *"commit pending user go"* line above is **resolved**: `678b2d6` (M14 implementation, 8 files) and `b3588bf` (verification fixes + doc refresh, 4 files) both sit on `m14-persistence`, tree clean, **not pushed** (2 ahead of `main`).
+- **Merge-to-main rehearsal, computed from the actual refs and workflow source rather than assumed.** `main` == `origin/main` == merge-base `4b03c55`, so the merge is a **fast-forward with no possible conflict** *while main stays there* — but `origin` carries parallel branches (`M12-attestor`, `M2-fixture`, `tests`, `bob`) that can move it, and both histories append to these session-log tails, so an append-vs-append conflict is the expected failure mode if anything lands first (the Session 20 pattern: keep both). Expected suite after merge: **211 items → 210 passed + the same §11.15 failure**, identical on both matrix legs; **CI red on both legs and the validator step skipped entirely** (recorded in `test-suite.md` ## CI). Consequence stated plainly: this merge is test-neutral — it makes CI no worse than main already is, and only an M2+M3 decision on §11.15 turns the pipeline green.
+
+### 2026-09-27 — Session 24: Bob-IDE refactor plan (planning only, no code change)
+- **Trigger:** LabLab Admin ruled (Discord, this session) that the **Bob IDE must be showcased as a core component** of the solution to be eligible for judging — ~5h before the 15:00 UTC submission cutoff — and all other developers were paused pending this plan. The hackathon grants **$40 Bob credits** on join (~80 Bobcoins at the documented $0.50), which removes the coin-exhaustion blocker that initially threatened a live Bob segment.
+- **Implemented:** nothing — plan-mode session: zero code, contract, fixture, dependency, or endpoint changes. Delivered the plan *"Close the loop, put Bob on the critical path"*: R1 loop wiring (M10 ACs) · R2 serve runs + `_dist` fix (M15 ACs) · R3 `select_client` landing · R4 deterministic chain slice against §1.7 · R5 §11.15 · R6 HTTP-mode Bob CLI (`scripts/attest.py`) · R7 dashboard · R8 prove/rehearse; 5-phase timeline (**3h build + 2h rehearsal**), branch disposition, risk fallbacks, out-of-scope list.
+- **Verified from source this session (re-confirming §11 as live, not stale):** `enqueue_run` still mints an id only; `jobs.worker` never started; `runs.py` hard-coded stubs; `main.py` `_dist` three-level climb unchanged; `ExposureCard` fed solely by `fetchMetrics()` (the stub). Branch state re-mapped: `main` == `origin/main` @ `bf52608`, clean; **all remote branches merged except** `M4-ingest` (7 commits by Aixxn — merge dry-run: **5 conflicts** = `schemas.py`, `test_models_parity.py`, 3 doc logs) and `bob/m13-mutation-harness` (2 commits by GiGi — dry-run: 3 doc-log conflicts only). Bob's integration surface confirmed from official docs: command/shell tools + MCP — the plan uses the command tool, no new dependency.
+- **User decisions affecting this record:** (a) **the mutation harness is not part of the current architecture** — `origin/bob/m13-mutation-harness` is unpruned dead work and will be deleted; note **§9, `exposure.schema.json`, and the `/api/metrics` stub are unaffected and remain as-coded** (the harness was never on `main`); (b) **ExposureCard hidden for the demo** — frontend-only; backend endpoint, contract, validator pair stay (route-table test + 6/6 coverage depend on them); (c) R4 thin slice as scoped; (d) Bob demo = **invoke the gate only** (one command-tool call; the run's `exit_code` is the merge signal); (e) `M4-ingest` merges with a **45-min timebox** and pre-agreed cherry-pick fallback (`b1689c3`, `6c69c04`).
+- **API endpoints:** none defined, changed, or removed. **Dependencies added:** none.
+- **Open at archive:** plan awaiting "go" (Phase 0 = delete dead branch, start M4 merge, `npm install`, Bob + credits health check, baseline suite); §11.15 still the only known red; **Figure 6 still do-not-show** (§11.11 unchanged); admin's answer on whether a pre-recorded Bob session counts is still pending; submission packaging unowned until Phase 5; the Aixxn/GiGi work sessions have no AGENTS.md entries of their own (branch state recorded here instead).
+

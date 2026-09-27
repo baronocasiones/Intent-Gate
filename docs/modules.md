@@ -50,7 +50,7 @@ break your module (from `docs/test-suite.md`'s coverage map — extend it as you
 | M9 | Stage 6 Emit + gate | `backend/app/gates/emit.py` | M | M8, M13, M14 | `test_gates.py` |
 | M10 | Orchestrator (pipeline + queue) | `backend/app/orchestrator/` | S | M9, M14 | `test_pipeline.py` |
 | M11 | LLM layer + config | `backend/app/llm/`, `config.py` | M | — | `test_llm.py`, `test_config.py` |
-| M12 | Attestor read-only policy | `backend/app/attestor/policy.py` | S | — | `test_policy.py` |
+| M12 | Attestor read-only policy | `backend/app/attestor/policy.py`, `backend/app/attestor/sandbox.py` | S | — | `test_policy.py` |
 | M13 | False-certified metric + mutation harness | `backend/app/metrics/` | M | M9, M14 | `test_metric.py` |
 | M14 | Persistence (db + artifacts) | `backend/app/db.py`, `store/` | S | M1 | `test_store_db.py` |
 | M15 | API surface | `backend/app/routers/`, `main.py` | M | M10, M13, M14 | `test_api.py` |
@@ -527,6 +527,13 @@ without re-parsing JSON Schema. **Code:** `backend/app/models/schemas.py`.
 `TraceabilityMatrix`, `Exposure` — all inheriting a strict `ContractModel` base.
 Parity with all five contracts is asserted in **`test_models_parity.py`**, not
 `test_schemas_contracts.py` (see the deviation note below).
+**Completed 2026-09-27 (Session 21):** the sixth contract, `findings.schema.json`
+(title `Finding`, landed by M1 that day), had no mirror and was **blocking a green
+tree**. Added the `Probe` literal and `Finding` — **seven models, six contracts,
+parity 6/6** — and 6 tests. `Finding` has **no defaults** on its five required keys,
+keeps `result` **unenumerated** (M7's vocabulary), and carries **no `evidence_tier`**
+because D1 is unratified. **This brief reopened and re-closed within one session**;
+the count of "five contracts" above is the Session 18 figure, preserved as written.
 **Target interface:** keep existing model names and defaults —
 `test_schemas_contracts.py` pins them.
 
@@ -559,11 +566,12 @@ Parity with all five contracts is asserted in **`test_models_parity.py`**, not
   **self-invalidating**: if M1 ever promotes it to `traceability-link.schema.json`
   with a `title`, the test fails until the entry is deleted. **Request for M1:**
   promote it, so parity is a clean bijection.
-
 **Strictness — a decision, not a default.** All six models inherit
 `ContractModel` with `extra="forbid"`, making these models the **strict** in-process
-trust layer while `contracts/` stays the **permissive** interchange layer (none of
-the five sets `additionalProperties: false`). This matches the gate's fail-closed
+trust layer while `contracts/` stays the **permissive** interchange layer (none of the
+five sets `additionalProperties: false` — six as of Session 21). This matches the
+gate's fail-closed
+
 posture (rule 6: uncertainty resolves to *not certified*). It is pinned by
 `test_every_model_forbids_unknown_keys` so it cannot silently drift to `ignore`.
 **The stage chain is unaffected** — `pipeline.py` passes plain dicts and rule 3
@@ -888,39 +896,93 @@ this module is still unimplemented.**
 ### M12 — Attestor read-only policy (the differentiator)
 
 **Purpose:** make the verifier **structurally incapable** of modifying what it verifies.
-**Code:** `backend/app/attestor/policy.py` — `GRANTS` = read, subagent, skill, workflow;
-`DENIES` = edit, execute; `assert_read_only()` fails closed on a leak or a gap. **Today:**
-enforced in tests only, never in the pipeline.
+**Code:** `backend/app/attestor/policy.py` — `GRANTS` = read, subagent, skill, workflow
+(harness groups) + `llm_egress` (an OS-level network property; `§1.6`, do not conflate
+them); `DENIES` = edit, execute; `resolve_worker_caps()` parses the `ATTESTOR_CAPS`
+declaration and fails closed; `assert_read_only()` fails closed on a leak or a gap;
+`policy_record()` refuses to mint a record that advertises a control it does not have.
+**Second file:** `backend/app/attestor/sandbox.py` — the observation layer.
+`probe_workspace_readonly()` attempts the forbidden write and reports what the kernel
+did, plus which of the two refusals it was, plus the mount's own `ST_RDONLY` answer.
+`enforce_worker_read_only()` is the single worker-startup call.
+**Today:** the module is **complete as a module and unwired in the product.** Both
+layers exist, both fail closed, and `app.attestor` has **zero product callers** — no
+gate, orchestrator or router imports it. `assert_read_only` is a set comparison and
+proves nothing on its own; the control is the refused write, which is why the second
+file exists at all.
+
+**The emitted fragment, which is the auditor's whole view of this control** —
+`to_dict()`, 10 keys, no key renamed or dropped in any session (rule 3):
+`capabilities`, `granted`, `denied`, `enforcement_applied`, `workspace_readonly`,
+`workspace_witness`, `workspace_path`, `workspace_mechanism`,
+`workspace_mount_readonly`, `workspace_mount_witness`. The last four are Session 22's
+and they are the ones that make the fragment evidence rather than reassurance: a
+refused write is **two different findings** and the record says which.
 
 **Acceptance criteria**
-- [ ] `assert_read_only` is called on the real worker capability set at worker startup
-      (**D6**). This is the difference between a claim and a control.
-      — **primitive landed in Session 20 (`9c7343d`); call site is M7/M10's file, so still open**
 - [x] Both failure directions stay covered: a leaked deny **and** a missing grant each
-      raise `PermissionError` (asserted today — do not weaken to a warning).
-      — held and extended; `DENIES`/`assert_read_only` byte-identical, md5-verified
-- [x] The policy is visible in the emitted record (which capabilities the run had), so an
-      auditor can see the control was applied.
-      — fragment built and pinned in Session 20; `record["attestor_policy"] = policy.to_dict()`
-        is M9's one line, so the record does not yet carry it
-- [x] **Never weakened for a demo shortcut** (rule 5, `AGENTS.md` Convention 8). If a
-      demo step seems to need `edit`, that is a bug in the demo, not the policy.
-      — mutation-tested: granting `edit` fails 22 tests, including one in `test_scaffold.py`
-        that M12 does not own
+      raise `PermissionError` (do not weaken to a warning). Pinned on the gated path
+      **and** the ungated one — Session 22 closed a hole where the not-probed record
+      path never consulted `DENIES` and would mint a record whose `capabilities` was
+      `["edit"]` while its own `denied` said `["edit", "execute"]`.
+- [x] The policy is visible in the emitted record, as a fragment M9 can embed verbatim.
+      `to_dict()` is JSON-ready, frozen, clock-free and hashable. **The producer is
+      still M9's** — see the open item below, so this box is ticked for the fragment
+      and not for the pipeline.
+- [x] **Never weakened for a demo shortcut** (rule 5, `AGENTS.md` Convention 5). No
+      session has moved `DENIES`, and the two widening routes are pinned: a `network`
+      grant is rejected as outside the vocabulary, and a *narrower* label is rejected
+      too — `no_write_bit` must never be worded as a read-only anything.
+- [ ] `assert_read_only` is called on the real worker capability set at worker startup
+      (**D6**). **Still open, and it is not M12's to close:** `enforce_worker_read_only`
+      exists and its **75 tests all pass** (63 before Session 22, +12 here), but
+      `gates/verify.py` and `orchestrator/pipeline.py`
+      belong to M7 and M10 (`§0.4`, rule 2). Session 22 deliberately did **not** edit
+      them. The one-line wiring each is owed is in the `policy.py` module docstring,
+      which names the env var verbatim: `enforce_worker_read_only(
+      os.environ.get(ATTESTOR_CAPS_ENV), workspace)` at worker startup, and
+      `record["attestor_policy"] = policy.to_dict()` in M9.
+- [ ] The D6 **read-only bind mount** exists. Session 22 made it *attestable* — the
+      record now distinguishes a read-only mount from a missing write bit, and reports
+      `ST_RDONLY` — but nothing in the repo creates a read-only mount. Owner **M10**,
+      which `sandbox.py` already names as the holder of the long-lived boundary.
 
-**Session 20 addendum (M12, `9c7343d`, branch `M12-attestor`).** `GRANTS` is now
-`HARNESS_GROUPS | OS_PROPERTIES` and includes **`llm_egress`**: M7b workers call watsonx.ai
-themselves, so a worker needs egress. Named for the capability *kind*, never a host, because
-egress must cover both the auth and inference endpoints and the region is env config. A blanket
-`network` grant is deliberately absent and pinned by a test. New `backend/app/attestor/sandbox.py`
-proves the workspace is read-only by attempting the forbidden write — the part that was missing
-entirely, and the reason withholding `edit` was previously theatre. Wiring, one line each, for the
-owners: `enforce_worker_read_only(os.environ.get(ATTESTOR_CAPS_ENV), workspace)` at M7/M10 worker
-startup, and `record["attestor_policy"] = policy.to_dict()` in M9. Stdlib only; no endpoint,
-contract, schema, or dependency changed.
+**Session 20 addendum (M12, `9c7343d`, branch `M12-attestor`; still accurate).**
+`GRANTS` is `HARNESS_GROUPS | OS_PROPERTIES` and includes **`llm_egress`**: M7b workers
+call watsonx.ai themselves, so a worker needs egress. Named for the capability *kind*,
+never a host, because egress must cover both the auth and inference endpoints and the
+region is env config. **A blanket `network` grant is deliberately absent and pinned by a
+test** — open egress would let a worker exfiltrate the very source it reads, which is the
+read-only claim itself. `sandbox.py` proves the workspace is read-only by attempting the
+forbidden write — the part that was missing entirely, and the reason withholding `edit`
+while the workspace was writable was **theatre**. `DENIES` and the body of
+`assert_read_only()` are byte-identical to their pre-Session-20 form (md5-verified at
+commit time), and widening is mutation-tested: granting `edit` fails 22 tests, including
+one in `test_scaffold.py` that M12 does not own. Stdlib only; no endpoint, contract,
+schema or dependency changed.
 
-**Size:** S. **Needs:** nothing. **Note:** this is the pitch's sharpest differentiator
-and a direct IBM read-only-governance angle. Cheap to finish, expensive to lose.
+**Two things this module deliberately does not do.**
+- **It does not require a read-only mount to start a worker.** Both refusals start one;
+  the record names which control answered. Requiring the mount would refuse to start
+  wherever the deployment cannot mount read-only — this laptop, and CI — and that
+  refusal says nothing about whether the control held. Session 22 considered requiring
+  it (the strict reading of D6) and rejected it for that reason. Revisit only if M10
+  can guarantee the mount.
+- **It does not observe `llm_egress`.** The grant is declared because M7b workers call
+  watsonx.ai themselves, and **no code exercises it yet** — there is no worker pool. The
+  allowlist that would pin egress to watsonx.ai is an OS-level control that does not
+  exist; the token names the *kind* of egress and nothing more. Session 22 chose to
+  record that in prose rather than add a per-run key, because a key saying "we never
+  enforce this" is a thing an auditor can misread as enforcement.
+  *(Corrected at this merge: the original text here also said "`MOCK_LLM` is read nowhere
+  in `backend/app`". Session 21 added `llm/__init__.py::select_client()`, which does
+  read it — see §11.9. The grant is still unexercised, because no stage calls the
+  selector either.)*
+
+**Size:** S — and now done except for the two wirings above, which are other modules'.
+**Needs:** nothing. **Note:** this is the pitch's sharpest differentiator and a direct
+IBM read-only-governance angle. Cheap to finish, expensive to lose. It is in Wave 0
+because everything else waits on it, not because it is large.
 
 ### M13 — False-certified metric + mutation harness — **the publishable number**
 
@@ -954,18 +1016,22 @@ publishable claim in the project.
 ### M14 — Persistence (db + artifacts)
 
 **Purpose:** the run index and the tamper-evident evidence store. **Code:**
-`backend/app/db.py` (SQLite, WAL, one `runs` table) and `store/artifacts.py`
-(`write_artifact` writes `{sha256, **payload}` to `$ARTIFACT_DIR/{run_id}.json`).
-**Today:** both correct and both with **zero callers** — nothing persists.
+`backend/app/db.py` (SQLite, WAL, one `runs` table + `idx_runs_created_at`;
+`get_db` derives from `DATABASE_URL` unless given an explicit path;
+`save_run`/`set_status` hold the commit; `get_run`/`list_runs` serve reads;
+`now_iso` is the single clock), `store/artifacts.py` (`write_artifact` writes
+`{**payload, sha256, prev_digest}` — payload-first so the store's keys win —
+plus the `prev_digest` D8 seam and the shared `artifact_path_for`), and new
+`store/records.py` (`read_artifact`, `project_run_payload`,
+`read_run_record` — discharges §M3 obligation 1, first product caller of the
+mirrors). **Today:** the seams exist and are guarded (40 tests); **no product
+caller yet** — M10/M15 wire them.
 
 **Acceptance criteria**
-- [ ] `runs` rows are written by M10 and read by M15. `artifact_path` points at the JSON.
-- [ ] `created_at` is an ISO-8601 **string** (the column is `TEXT`; a mutation-lab run
-      showed nothing currently pins the *type*, so add a test that does).
-- [ ] The artifact `sha256` continues to cover the sorted body exactly as today
-      (`test_store_db.py` pins it). Cross-file chaining is M9's job (**D8**).
-- [ ] `ARTIFACT_DIR` and `DATABASE_URL` remain env-driven; tests keep using `tmp_path`
-      so the repo tree stays clean (`docs/test-suite.md` Convention 3).
+- [ ] `runs` rows are written by M10 and read by M15. `artifact_path` points at the JSON. **M14's half is done** (`save_run`/`set_status`/`get_run`/`list_runs` + the artifact path); the callers are pending.
+- [x] `created_at` is an ISO-8601 **string** (`now_iso`, UTC tz-aware; type pinned by `test_save_run_created_at_is_iso8601_string` — landed once, here, not in M17).
+- [x] The artifact `sha256` continues to cover the sorted body exactly as today (`test_store_db.py` pins it, plus the store-keys-win negative). `prev_digest` rides alongside as a PROPOSED, UNCONTRACTED D8 seam (D15) with a self-invalidating guard. Cross-file chaining stays M9's.
+- [x] `ARTIFACT_DIR` and `DATABASE_URL` are env-driven (`DATABASE_URL` now has a reader — `_sqlite_path` strips `sqlite:///`; `config.py` untouched); tests keep using `tmp_path` so the repo tree stays clean (`docs/test-suite.md` Convention 3). **Known limitation, accepted:** both defaults are CWD-relative (recorded in `docs/architecture.md` §6).
 
 **Size:** S. **Needs:** M1. **Note:** a `/tmp/opencode/mutation_lab.py` harness exists
 from an earlier session — it injects deliberate bugs into a scratch copy of the repo and
@@ -1382,6 +1448,7 @@ record that you did.
   working, not a near-miss. Recorded here because the mistake was in the specification, and
   the log should not read as though the first pass got it right.
 
+
 ### 2026-09-27 — Session 19: M2 — demo corpus landed (commit `88095b2`)
 
 - **M2 implemented.** 6 files: 3 fixtures, the served copy under `frontend/public/`, the
@@ -1440,3 +1507,257 @@ record that you did.
   via `EROFS`; every refusal test gets `EACCES` from a `chmod 555` directory. Dropping `EROFS`
   does fail the suite (2 tests), so the translation is pinned — but that is substitution, not
   observation. M17's to close.
+
+### 2026-09-27 — Session 21: M3 reopened and re-closed — the `Finding` mirror
+
+Instruction: *"analyze the code base, make sure that it pass the tests"*, extended to verify
+the suite across Python versions rather than the pinned one. This session **implemented**
+M3's outstanding half, so per rule 10 the log lands here as well as in
+`docs/architecture.md` / `docs/test-suite.md`; the **verification-only** findings were
+kept out of this file, per Session 19's precedent.
+
+- **The gap this closed:** M1 shipped `contracts/findings.schema.json` (title `Finding`)
+  on 2026-09-27 with no mirror, which made `test_contract_model_parity_is_a_bijection`
+  and both coverage tests fail — **112 tests, 109 passing, tree red.** The parity test's
+  own docstring names the remedy (*"do not suppress it, mirror the schema"*), and
+  `modules.md` §0.4 makes `backend/app/models/schemas.py` **M3-exclusive**, so this was
+  M3's file to fix rather than a merge side-effect. Added `Probe` (5-value `Literal`) and
+  `Finding`. Parity **5/5 → 6/6**; mirrors **six → seven**; suite **112 → 118**.
+- **The three properties of `Finding` that are decisions, not defaults** — each written
+  into the model docstring and pinned by a test, because each one is a place where a
+  later session could "helpfully" diverge from the contract:
+  - **No `evidence_tier`**, because **D1 is unratified** and the contract's own
+    `description` forbids adding it. This is the sharpest case in the module: a
+    *helpful* addition would have encoded a ladder nobody has agreed, and nothing in the
+    suite would have complained. `test_finding_does_not_encode_d1_tier_semantics` now
+    makes the omission loud.
+  - **`result` stays unenumerated** — its vocabulary is **M7's** to define, not M1's or
+    M3's.
+  - **No defaults** on any of the five required keys, matching `Criterion`'s asymmetry
+    rather than `CriterionVerdict`'s: a probe defaulting `location`/`note` to `""` would
+    attest that something was examined when it was not.
+- **Two asymmetries in the M3 brief are now three-plus-one:** `TraceabilityLink` remains
+  the one *invented name* (the link object is declared inline, so it has no `title` to
+  join on) and the **`INLINE_MIRRORS` exception is still outstanding** — M1's request to
+  promote `traceability-link.schema.json` is unanswered, so parity is still not a clean
+  bijection. `Finding` did **not** add to that set: `findings`/`Finding` agrees
+  case-insensitively, so the filename/`title` disagreements stay at **three**
+  (`run`, `traceability`, `verdict`) — recounted from source, not taken on trust.
+- **Proven, not asserted:** 9 mutations against fresh throwaway copies. The **first
+  harness was broken and reported 7/7 killed — all false** (bare filenames make pytest exit
+  4, and `rc != 0` scored as a kill). Only a **control run** and reading *which* test
+  died exposed it; the true baseline was 3/7 with 4 real survivors, all now closed and
+  re-proven 7/7.
+- **AC 1 note:** still ticked, and now true for the sixth contract as well. AC 3 ("literals
+  stay in sync with the schema enums") extends to `Probe`, whose enum-sync check lives in
+  `test_schemas_contracts.py::FIVE_PROBES` while its **wiring** check lives here — the
+  two are deliberately in different files, which is what let the wiring go unguarded until
+  this session.
+- **M3 is still not load-bearing** (`architecture.md` §11.10): the mirrors have **zero
+  product callers**, so this session made the *shapes* trustworthy and nothing more. The
+  two strictness obligations (artifact-envelope projection, M9's superset record) are
+  untouched and remain M9/M14's.
+- **Owed, not done:** §11.12's three original enum fields are still unguarded; nothing
+  in this session widens the support matrix (that is M17's file, §0.4); and `requirements.txt`
+  still pins no transitive dependency, so **no leg of this verification is reproducible**
+  until M17 decides on pins or a lockfile.
+
+### 2026-09-27 — Session 24: refactor plan — module decisions (no code change)
+- **Plan-mode session, zero code/contract/fixture/dependency changes.** Trigger: LabLab Admin
+  made the **Bob IDE a showcase requirement for judging eligibility** ~5h before submission;
+  all developers paused; $40 Bob credits on join remove the coin blocker. The decisions below
+  change module scope or ownership — owners fold them into their briefs when they land
+  (rule 10 records findings in `architecture.md`; these are *decisions*, logged at their source).
+- **M13 — the mutation harness is OUT of the current architecture (user decision).**
+  `origin/bob/m13-mutation-harness` (GiGi, 2 commits) is unpruned dead work and will be
+  **deleted**; the harness acceptance criteria in §M13 are superseded for this build.
+  **What stays as-coded:** `metrics/false_certified.py` + its tests, `exposure.schema.json`
+  + validator pair, and the honest `measured: false` stub on `/api/metrics` (never remove a
+  shape tests and the coverage check depend on — presentation is the cheap fix, removal is
+  not). Consequence: the false-certified rate **cannot be measured in this build**; the demo
+  shows no number at all rather than a synthetic one.
+- **M16 — scope change:** **hide `<ExposureCard>` for the demo** (frontend-only; this
+  supersedes M2's request #2 to feed it `demo_exposure.json` for now). Rest of M16 unchanged:
+  `npm install`/`npm run build` at Phase 0, the `VerdictBadge` lowercase-`status` defect,
+  triple-fixture cleanup, and proof that the matrix renders **live** (no fixture-mode banner).
+- **M18 — scope change:** the runbook gains the **Bob integration**: new `scripts/attest.py`,
+  **HTTP mode** (POST `/webhooks/github` → poll `GET /api/runs/{id}` → print verdict +
+  traceability → exit with the run's `exit_code`; `--direct` in-process fallback), plus
+  `fixtures/demo_payload.json` holding the §1.7 body. HTTP mode is deliberate — it dodges §6's
+  CWD-relative SQLite trap. Bob's demo moment is **invoke only** (one command-tool call, no
+  live code authoring mid-demo).
+- **Ownership / build assignments (one writer per file, §0.4 honored):**
+  - **Role 1 → Cody:** M10 + M15 (R1 loop wiring, R2 serve + `main.py` `_dist` fix; the
+    stub-test flips are in scope and must land in the same commits — rule 7).
+  - **Role 2 → Aixxn:** merge their own **`M4-ingest`** (45-min timebox; fallback =
+    cherry-pick `b1689c3` `select_client` + `6c69c04` D1 ratification, then stub-passthrough
+    ingest), **§11.15** fix inside that merge, M3-file conflicts resolved (main's Finding
+    mirror wins; docs keep both — Session 20 pattern).
+  - **Role 3 → baron:** R4 thin slice on **M5/M8/M9** — real extract parsing, real
+    adjudicate ladder per §1.4 (D1), derived `exit_code` per §1.5; parse/verify stay
+    stub-shaped with mock-backed §1.7 findings (Convention 4, provenance in the runbook).
+    Plus integration merges of every green lane.
+  - **Role 4 → GiGi:** M18 deliverables above (freed by the harness drop).
+  - **Role 5 → FE dev:** M16 scope as changed.
+- **§1.7 is the demo contract** for R4's target outputs. Budget: **3h build / 2h rehearsal**
+  (authorized deviation from Convention 6's nominal final-4h). D1 rides the `M4-ingest` merge;
+  no contract changes are planned, so the validator stays 6/6 throughout.
+### 2026-09-27 — M12: fits the current architecture (A + B + C)
+
+> **Heading relabelled, content untouched.** This entry was "Session 22" until the merge
+> that unblocked PR #48, because `main` independently carries a *"Session 22: M14
+> persistence"* and a *"Session 23"* from a parallel session and two entries with the same
+> number in one log is a legibility defect in a record whose entire premise is that
+> claims must be checkable. Numbering dropped per `AGENTS.md` Convention 18 (cite date +
+> module). **Prose inside this entry still says "Session 22"** and refers to this same
+> entry — deliberately not swept, so the diff into a file with an incoming merge conflict
+> stays as small as possible. That is a recorded inconsistency, not a silent one.
+
+- **Instruction:** *"I am working on the M12 attestor read-only policy. The llm layer is
+  only using mock data for it, because there have been changes"* — clarified to *"update
+  m12 to fit the current system architecture."* `/start` protocol first, then a plan agreed
+  as three named changes: **A** attest the D6 mechanism, **B** let the record name the
+  workspace, **C** close the ungated leak. `llm_egress` was decided explicitly: **keep
+  it, record it as unexercised.**
+- **The premise was half right, and the right half was not where the problem was.** The
+  LLM layer *is* mock-only — `MOCK_LLM` is read nowhere in `backend/app`, `mock_client` is
+  imported only by tests, and `watsonx_client.complete` is `NotImplementedError` past the
+  key check (§11.9). But that touches M12 in exactly one token, and the module's real
+  mismatch was elsewhere: **the docs described a module that had not existed for a
+  session.** `sandbox.py`, `resolve_worker_caps`, `PolicyRecord`, `enforce_worker_read_only`
+  and the fifth grant were all on disk and in no brief.
+- **The finding that shaped the change:** a refused write is **two different findings**,
+  and the module reported them as one boolean. A 0555 directory — a permission on one
+  inode that whoever owns it can restore — produced a record byte-identical to a real
+  read-only mount, which is the boundary D6 actually asks for. So the record now names
+  the mechanism (`read_only_mount` vs `no_write_bit`) and carries the mount's own
+  `ST_RDONLY` answer alongside the kernel's errno. The mount flag is read **after** the
+  write and can never override it, because an implementation that let the flag win would
+  report a workspace as read-only immediately after accepting a write — the fail-open
+  inversion of everything this module claims. That ordering is pinned by a test that makes
+  the write land and the flag lie.
+- **The hole in C was real and ungated by design.** `policy_record(..., enforcement_applied
+  =False)` returned without ever consulting `DENIES`, so it would mint a record whose
+  `capabilities` was `["edit"]` while its own `denied` said `["edit", "execute"]` — the
+  module whose purpose is that those cannot both be true, producing both. Both record paths
+  now refuse, with distinct messages, because a run that never gated has no policy to
+  violate and its defect is incoherence rather than a leak. The check was deliberately
+  **not** extended to completeness: an ungated record legitimately reports a partial set,
+  and requiring all five grants there would make the not-probed marker unusable.
+- **Three guards flipped deliberately in the same change (rule 10), each labelled
+  `CHANGED THIS SESSION` in the test:** two exact-dict record-shape assertions, and the
+  module docstring's claim that *exactly one* test substitutes the OS call. The last was
+  a false claim the moment the second substitution landed, and the inventory was recounted
+  from the file rather than estimated — the first draft of that recount said three
+  `statvfs` substitutions where there are four.
+- **A test whose docstring overstated what its body checked was rewritten rather than
+  left.** `test_the_two_readings_are_reported_separately_not_collapsed` described a
+  contrast between two deployments and then asserted one; it now actually makes both
+  readings and asserts they differ, which is the argument for carrying the field at all.
+  A test that describes more than it checks is the same defect as a docstring that
+  describes more than the code does.
+- **A strict reading of D6 was considered and rejected, on the record.** Requiring a real
+  read-only mount to start a worker is the honest maximal reading — and it would refuse to
+  start on any machine that cannot mount read-only, including this one and CI, saying
+  nothing about whether the control held. D6's "fail closed" attaches to the capability
+  check, not to a demand for one specific kernel mechanism. Both refusals still start a
+  worker; the record now says which one it got. Revisit only if M10 can guarantee the mount.
+- **`llm_egress` kept, and the admission recorded in prose rather than in the record.** A
+  per-run key saying "this grant is never enforced" is a thing an auditor can misread as
+  enforcement; a sentence in the brief cannot. The token stays because M7b's workers call
+  watsonx.ai themselves, and **nothing exercises it yet** — there is no worker pool.
+- **Docs updated, no new files (Convention 1):** this brief rewritten to the as-built two
+  layers, `sandbox.py` added to M12's row in §0.2 (**it was owned by nobody**), plus the
+  `architecture.md` §3 row / §8 / §11.5 / §11.11 / §12 layout, `test-suite.md` layout and
+  §8 coverage row, the `intent-attestation-gate.md` file-layout line, and a **dated
+  supersession note** on `watsonx-integration.md` §6 rather than a rewrite of that
+  dossier's point-in-time snapshot.
+- **Debt found and recorded, not fixed:** the two-layer policy, the fifth grant and the
+  whole of `sandbox.py` landed with **no session-log entry in any doc** — this file ends at
+  Session 21, `architecture.md` at Session 21, and `AGENTS.md` at **Session 15**. It is
+  recorded here as a finding reconstructed from source rather than as a fabricated entry
+  attributed to a session that did not write it. `AGENTS.md`'s history is six sessions
+  stale and is updated only by `/end`.
+- **Also found and deliberately left:** `test_enforce_workspace_readonly_returns_the_proof_
+  on_a_read_only_workspace` carries a **duplicated `@SKIP_AS_ROOT` decorator**. Harmless by
+  construction, pre-existing, and unrelated to this change — noted rather than quietly
+  fixed inside someone else's line.
+- **No contract, fixture, dependency, endpoint or gate file was touched.** No
+  `conftest.py` — the root-skip marker stayed in `test_policy.py`, where it was already
+  reasoned about. `validate_contracts.py` output is a non-regression check, not a new
+  assertion: the `attestor_policy` fragment remains part of the un-contracted artefact
+  envelope (**D15**), which is M9's and M14's obligation.
+- **Verified, not asserted.** **192 collected, 191 passed** — identical on **3.11.16,
+  3.12.14 and 3.14.7**. Both CI-matrix legs were **provisioned fresh** for this session
+  because neither was installed and a 3.14 result does not count (rule 9). Validator exit
+  0 on every leg. `test_policy.py` **75 passed, 0 skipped** (baseline 63, **+12**), run as
+  uid 1000 so all 21 root-guarded cases actually executed instead of skipping — which is
+  what makes the 0555/`EACCES` evidence real rather than bypassed. Zero probe residue;
+  source tree byte-identical before and after.
+- **Convention 7 satisfied, and the control run earned its keep again.** Seven mutations,
+  seven kills, no survivors; the fail-open inversion (M5) died on the guard's own message.
+  **The harness's first score was a false kill for the second time in two sessions** — an
+  imported-constant rename breaks *collection* (pytest exit 2, zero tests collected), and
+  `rc != 0` would have scored it as a kill. Session 21's first harness reported 7/7 false
+  kills the same way. Hardened to accept only exit 0/1 plus a node id outside the known
+  baseline, and M3 re-expressed so the guard actually ran.
+- **The suite's one failure is not M12's, and not "unfinished work" either.**
+  `test_models_parity.py::test_demo_traceability_fixture_loads_into_model` asserts
+  all-E0 links while M2's merged corpus (`88095b2` → `4b03c55` = HEAD) set E4/E2. That is
+  a **missed guard flip in the M2 merge** — `test_schemas_contracts.py` was updated,
+  `test_models_parity.py` was not — and there are **two** stale assertions, not one.
+  Proven pre-existing by running a pristine `git archive HEAD` extraction (`1 failed, 179
+  passed`, M12 absent). **Not actioned:** `test_models_parity.py` is M3's and the fixture
+  is M2's, so fixing it here would be a two-owner edit (rule 2/§0.4). **It will not clear
+  itself when the remaining modules land**, which is the part of "still unfinished" that
+  does not hold — filed in `docs/test-suite.md` for its owner.
+- **Provenance of the baseline, found last and worth recording because the record was
+  missing it entirely.** The two-layer policy, `sandbox.py`, the fifth grant and the first
+  63 tests were **not** unlogged improvisation — they are commit **`9c7343d`**, authored
+  by `Aixxn <adrianazures6@gmail.com>`, merged as **PR #42** (head `M12-attestor`,
+  2026-09-27). `9c7343d` reached `main` as a *side effect* of PR #43 merging first: #43's
+  branch had `9c7343d` as its parent, so #43 pulled it in and #42 then merged with nothing
+  left to merge — which is why it is absent from main's first-parent chain and why two PRs
+  show one landing. So the debt recorded above is narrower than "nobody logged it": the
+  commit and PR exist, and only the **doc record** was never written. Session 22's entries
+  are the first and only record of it.
+- **Delivery: `936db35`, 8 files, 1003 insertions / 70 deletions, PR
+  [#48](https://github.com/baronocasiones/Intent-Gate/pull/48) OPEN** against `main` from
+  `m12-attestor-policy`, pushed with the explicit refspec
+  `git push -u origin m12-attestor-policy:m12-attestor-policy`. The PR body opens by
+  naming #42, because a reviewer who sees 314 test lines and no `assert_read_only` would
+  otherwise conclude the differentiator was never built. The merged `M12-attestor` ref was
+  **not** touched (`9c7343d`, verified still at that SHA after the push).
+- **The rebase onto `main` was attempted and ABORTED on conflict, and the branch is 1
+  behind.** `main` moved to `bf52608` (M14, #47) and both sides append to the same
+  session-log tails, so `docs/architecture.md` and `docs/test-suite.md` conflict
+  append-vs-append. The rebase was aborted rather than resolved, so `936db35` survives
+  byte-for-byte. **Resolution is "keep both entries"** and it belongs to whoever merges.
+- **A session-number collision, which is this log's problem and not the merger's:** `main`
+  now carries entries titled **"Session 22: M14 persistence"** and **"Session 23:
+  verification round archived"** from a parallel session. This entry is *also* Session 22.
+  The two are unrelated and both are real. Renumbering here would only trade a duplicate
+  label for a different lie about the sequence, so the collision is recorded instead —
+  **the numbering scheme is per-session-local and does not survive parallel work, and
+  someone should decide what replaces it before the next four sessions land.**
+- **Correction to a false claim that has been propagating across sessions.** Session 15
+  recorded *"no credential helper and no `gh` in this environment, so no PR exists yet and
+  write access for `Cody-me` is untested."* **All three parts are false.** `gh` **2.101.0
+  is installed** at `/home/cody-laptop/.local/bin/gh` and merely **not on `PATH`**, which
+  is why `which gh` failed and the absence was concluded. There *is* a credential helper —
+  it is URL-scoped, `credential.https://github.com.helper = !/home/cody-laptop/.local/bin/gh
+  auth git-credential`, so git authenticates without `gh` ever being on `PATH`. `gh auth
+  status` shows a live `repo`-scoped session for `Cody-me`. **Write access is now tested
+  and confirmed** (`git push --dry-run` exit 0, then a real push to `936db35`). The lesson
+  generalises past git: *a tool reported missing by a `which`-style probe may be present
+  and merely unpathed, and "we could not find it" is not the same claim as "it does not
+  exist."*
+- **One trap found in the local config, left in place and documented rather than silently
+  fixed:** `branch.m12-attestor-policy.merge` pointed at `refs/heads/main`, so `@{u}`
+  resolved to `origin/main`. A bare `git push` is actually **aborted** by git
+  (`push.default=simple` refuses when the upstream name differs, exit 128) rather than
+  silently hitting main — but git's own error message suggests `git push origin HEAD:main`,
+  which would, and anyone setting `push.default=upstream` turns it into a silent push to
+  main. `git push -u` with an explicit refspec fixed it, and that is the form recorded in
+  the module docstring's wiring instructions.
+

@@ -62,11 +62,15 @@ def test_worker_is_async_but_never_started_by_app():
     """§11.1: worker() exists and is a coroutine function, but main.py never
     schedules it. Asserting absence here means: when wiring lands, this test
     flips and must be rewritten on purpose."""
-    import asyncio
+    import inspect
 
     from app.orchestrator import jobs
 
-    assert asyncio.iscoroutinefunction(jobs.worker)
+    # `inspect`, not `asyncio` — the latter is deprecated as of Python 3.14 and
+    # slated for removal in 3.16. Identical result here: `worker` is a plain
+    # `async def` with no `markcoroutinefunction` decorator, which is the only
+    # case where the two disagree.
+    assert inspect.iscoroutinefunction(jobs.worker)
     # main.py imports only the routers — no jobs import at app entry:
     from app import main
 
