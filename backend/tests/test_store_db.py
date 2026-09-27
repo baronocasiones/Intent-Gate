@@ -77,13 +77,20 @@ def test_write_artifact_sha256_is_hash_of_sorted_body(tmp_path, monkeypatch):
     assert data["b"] == 2
 
 
-def test_write_artifact_hash_independent_of_key_order():
-    """sort_keys=True means dict insertion order cannot change the digest."""
-    a = {"x": 1, "y": 2}
-    b = {"y": 2, "x": 1}
-    ha = hashlib.sha256(json.dumps(a, sort_keys=True).encode()).hexdigest()
-    hb = hashlib.sha256(json.dumps(b, sort_keys=True).encode()).hexdigest()
-    assert ha == hb
+def test_write_artifact_hash_independent_of_key_order(tmp_path, monkeypatch):
+    """sort_keys=True *inside write_artifact*: two payloads whose dicts are
+    inserted in opposite orders must emit the same digest. Exercised through
+    the product — this test originally hashed two dicts directly with
+    hashlib and therefore guarded nothing (Session 22 verification finding A)."""
+    monkeypatch.setattr(artifacts_mod, "ARTIFACT_DIR", str(tmp_path))
+    p1 = artifacts_mod.write_artifact("ord-a", {"x": 1, "y": 2})
+    p2 = artifacts_mod.write_artifact("ord-b", {"y": 2, "x": 1})
+    h1 = json.loads(Path(p1).read_text())["sha256"]
+    h2 = json.loads(Path(p2).read_text())["sha256"]
+    assert h1 == h2  # insertion order cannot reach the digest
+    assert h1 == hashlib.sha256(
+        json.dumps({"x": 1, "y": 2}, sort_keys=True).encode()
+    ).hexdigest()
 
 
 def test_write_artifact_lands_under_configured_dir(tmp_path, monkeypatch):
@@ -173,11 +180,16 @@ def test_now_iso_orders_lexicographically():
 
 def test_schema_includes_created_at_index(tmp_path):
     """`GET /api/runs` lists newest-first — the index keeps it an index scan.
-    An index is not a table, so the single-table guard above is untouched."""
+    An index is not a table, so the single-table guard above is untouched.
+    Pins the index's *target column* too: `index_list` only shows names, so
+    without `index_info` a mutation to `ON runs(id)` would pass
+    (Session 22 verification finding B)."""
     conn = get_db(str(tmp_path / "t.db"))
     try:
         names = {row[1] for row in conn.execute("PRAGMA index_list(runs)")}
         assert "idx_runs_created_at" in names
+        cols = {row[2] for row in conn.execute("PRAGMA index_info(idx_runs_created_at)")}
+        assert "created_at" in cols
     finally:
         conn.close()
 
@@ -291,6 +303,30 @@ def test_list_runs_respects_limit(tmp_path):
         for i in range(3):
             save_run(conn, f"run-l{i}", "queued")
         assert len(list_runs(conn, limit=2)) == 2
+    finally:
+        conn.close()
+
+
+def test_list_runs_orders_by_created_at_not_id(tmp_path, monkeypatch):
+    """The column driving the sort must be `created_at`, not `id`.
+
+    `test_list_runs_newest_first` saves ids that sort in insertion order, so
+    its expectation is satisfied by `created_at DESC`, by `id DESC`, and by
+    the tiebreak alone — it cannot tell them apart. Here the clock is mocked
+    and the ids are reverse-sorted, so the three orderings disagree
+    deterministically (no microsecond race): only a genuine
+    `created_at DESC` yields [run-aaa, run-zzz]
+    (Session 22 verification finding C).
+    """
+    stamps = iter(
+        ["2026-01-01T00:00:00.000001+00:00", "2026-01-01T00:00:00.000002+00:00"]
+    )
+    monkeypatch.setattr(db_mod, "now_iso", lambda: next(stamps))
+    conn = get_db(str(tmp_path / "t.db"))
+    try:
+        save_run(conn, "run-zzz", "queued")  # older stamp, later id sort position
+        save_run(conn, "run-aaa", "queued")  # newer stamp
+        assert [r["id"] for r in list_runs(conn)] == ["run-aaa", "run-zzz"]
     finally:
         conn.close()
 

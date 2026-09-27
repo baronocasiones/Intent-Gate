@@ -788,7 +788,7 @@ publishable claim in the project.
 plus the `prev_digest` D8 seam and the shared `artifact_path_for`), and new
 `store/records.py` (`read_artifact`, `project_run_payload`,
 `read_run_record` — discharges §M3 obligation 1, first product caller of the
-mirrors). **Today:** the seams exist and are guarded (39 tests); **no product
+mirrors). **Today:** the seams exist and are guarded (40 tests); **no product
 caller yet** — M10/M15 wire them.
 
 **Acceptance criteria**
