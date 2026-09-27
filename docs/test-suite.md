@@ -38,6 +38,17 @@ per Convention 4; validator exit 0 both legs). Largest files: `test_ingest.py`
 is gone, replaced by a run↔traceability coherence check that cannot go stale
 the same way twice.
 
+**R4 thin slice (2026-09-27, Session 25):** the suite is **399 tests — 399 passed,
+0 failed** on **3.11.9 and 3.12.14** (same venvs, pins re-installed; validator
+exit 0 both legs). R4's own contribution is **+36**: `test_extract.py` (11),
+`test_parse.py` (4), `test_adjudicate.py` (13), `test_emit.py` (6), `test_gates.py`
++2 net (4 stub flips in the same changes per rule 7, §1.8.3 custody + end-to-end
+chain tests). The remainder of the 339→399 delta is parallel lanes' (M18
+`test_attest_cli.py`, R1/R2 pipeline/API extensions) — landed by their sessions,
+green in the same runs. Guards mutation-proven: 9/9 behavioural kills (Session 21
+rules: control green, killing test named) + both no-LLM-import AST guards proven
+lethal; harness at `/tmp/opencode/r4_mutation_harness.py` (outside the repo).
+
 ## Layout
 
 ```
@@ -631,3 +642,17 @@ failure** on both legs (the failure re-proven pre-existing on parent
 - **One mock exists in the file** and is named as such: `test_refusal_witness_is_the_errno_the_kernel_gave`
   substitutes the OS call, because a genuine `EROFS` needs root. Every *refusal* test still attempts
   a real write. The re-raise path is reached for real instead, via a self-referential symlink (ELOOP).
+
+### 2026-09-27 — Session 25 (R4): M5/M6/M7-stub/M8/M9 guards (this session)
+- **+36 tests, all on `refactor`:** `test_extract.py` (11: §1.7 split, empty/compound/
+  vague/duplicate rejections, stable ids, threading, no-LLM-import AST guard),
+  `test_parse.py` (4: unresolved anchors, threading, no-LLM-import AST guard),
+  `test_adjudicate.py` (13: §1.7 pair, D3 table, fail-closed edges, contract
+  conformance), `test_emit.py` (6: derivation table, echo, traceability both
+  directions + link conformance, unmeasured exposure, bare-dict tolerance),
+  `test_gates.py` +2 net (4 stub flips in the same changes per rule 7, §1.8.3
+  custody test, end-to-end §1.7 chain test). Chain-order tests live here, not in
+  `test_pipeline.py` — that file is M10's, and the pipeline-level test is Cody's.
+- **Status recomputed above (399/399 both legs).** Mutation battery 11/11 lethal
+  (Session 21 rules); the two AST import guards were proven separately by
+  inserting `import app.llm` into throwaway copies — both fire.

@@ -898,3 +898,43 @@ was correct throughout; the drift was entirely in prose. All ten are now correct
 - **API endpoints:** none defined, changed or removed. **Dependencies added:** none.
   Only remaining refactors-plan M1–M3 item is M16's `fixtures.js` deletion (out of scope
   here). §11.12's enum guards stay out per user instruction.
+
+### 2026-09-27 — Session 25 (R4): M4-ingest merged, M5/M6/M7-stub/M8/M9 landed (this session)
+- **Phase 0 first, per user decision ("wait for M4 merge").** No network to origin
+  (SSH denied), so the merge was performed locally: `origin/M4-ingest` → `main` as
+  `27ec711`. Exactly the 5 predicted conflicts; resolutions: main's Finding mirror
+  wins (fields identical), branch additive parity guards kept, same-name duplicates
+  dropped (shadowing), docs keep-both with branch gaps 12/13 renumbered 16/17.
+  **Resolution bug caught by the suite before commit** (schemas.py resolution dropped
+  `Finding.criterion_id`/`probe` → 7 failures; restored, re-ran green). Baseline at
+  merge: **339 passed + validator 6/6, both legs; §11.15 CLOSED** (branch's flipped
+  agreement test passes — no separate fix needed). `refactor` reset onto the merge
+  (dropping the empty duplicate `7f65009`).
+- **R4 thin slice on `refactor` (baron): M5 real** (deterministic `AC-n:` split,
+  compound/vague/empty/duplicate rejections with reasons, marker-stable ids,
+  `files`/`workspace` threaded per §1.8.3); **M6 pass-through** (criteria/files/
+  workspace threaded, `unresolved` anchors); **M7 mock stub** (verbatim §1.7 findings
+  for AC-1/AC-2, `undetermined` otherwise, `mode: "mock"` + `tokens_spent: 0`
+  provenance, criteria threaded — without this M8 emits `verdicts: []`, the §1.8.3
+  fail-open); **M8 real ladder** (D1 + §1.8: CERTIFIED needs E4, refuted+located caps
+  at E2 — the table's silent cell, demo-anchored — unrecognised results loud,
+  D3 aggregation, `verdicts: []` → PENDING); **M9 thin slice** (derived `exit_code`,
+  envelope + traceability + conforming unmeasured exposure; no run_id/ledger/chain
+  — D15 uncontracted, contracts frozen; D16 kept open with both keys present).
+- **Demo spine proven:** §1.7 chain → AC-1 CERTIFIED@E4, AC-2 REJECTED@E2, run
+  REJECTED, exit 1 (`test_demo_chain_end_to_end_certified_and_rejected_exit_1`).
+- **Verified: 399 passed + validator 6/6 on 3.11.9 and 3.12.14** (R4 +36 tests;
+  remainder parallel lanes', green together). Guards mutation-proven **11/11**
+  (9 behavioural + 2 no-LLM-import AST guards; harness `/tmp/opencode/r4_mutation_harness.py`).
+- **Parallel-lane coexistence:** M10 (R1), M2-payload, M18-attest and M1–M3-docs lanes
+  worked the same branch via linked worktrees (`/tmp/opencode/m10-lane`,
+  `/tmp/opencode/refactor-verify`) and this tree. Zero file overlap with R4's code;
+  the R4 commit stages only its own files. `test_attest_cli.py` already asserts
+  compatibility with R4's derived exit ("stable across the thin slice").
+- **Lost-update incident, recorded as a process finding:** a parallel docs session
+  rewrote all three records mid-session from a stale read, silently dropping this
+  session's four appended blocks (Status update + 3 log entries). Re-appended here
+  and committed immediately. `docs/*.md` tails are contended across sessions and
+  §0.4 does not cover them — append-only works only if every writer re-reads right
+  before writing. Ownerless observation for M17 or the next integrator.
+- **API endpoints:** none defined, changed or removed. **Dependencies added:** none.

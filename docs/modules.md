@@ -656,18 +656,24 @@ ISO/IEC/IEEE 29148, rejecting unverifiable ones outright. **Code:**
 `rejected: [{text, reason}]` channel so rejections are auditable rather than silent
 (audit-trail convention).
 
-**Acceptance criteria**
-- [ ] Each criterion is **atomic** — one verifiable claim each. "Refunds work and are
-      fast" is two criteria, or one rejected criterion.
-- [ ] Vague or unverifiable criteria are rejected **with a reason**, surfaced in
-      `rejected[]`. Rejection is a first-class outcome, not a silent drop.
-- [ ] `criterion_id`s are assigned in order and are stable across reruns of the same input.
-- [ ] **Dual-mode:** with `MOCK_LLM=true` this must still return criteria from a fixture
-      (rule 4). The mock client's canned `PENDING` verdict is *not* criteria — wire a
-      mock path that returns fixture criteria, or M16 has nothing to render.
-- [ ] With `MOCK_LLM=false` and no key it must fail **loud** (the existing `RuntimeError`),
-      never silently return `[]`.
-- [ ] `test_gates.py::test_extract_stub_shape` updated in the same change.
+**Acceptance criteria (Session 25 — landed on `refactor`, R4 thin slice)**
+- [x] Each criterion is **atomic** — via the brief's second alternative: a compound
+      candidate is one *rejected* criterion ("split into one verifiable claim each").
+- [x] Vague or unverifiable criteria are rejected **with a reason**, surfaced in
+      `rejected[]`.
+- [x] `criterion_id`s come from the `AC-n:` markers and are stable across reruns
+      (no reassignment to drift).
+- [x] **Dual-mode: superseded by D-c/D-f.** Extraction is deterministic with no LLM
+      in the stage, so both modes behave identically — there is no switch to guard.
+      The consumer control §11 gap 9 asks M5 for is the no-import test
+      (`test_extract_imports_nothing_from_the_llm_package`), not a fixture path.
+- [x] **Loud failure without a key: moot** — no key is ever needed (no client).
+      Malformed input (missing/non-string `requirement`) yields empty channels, never a raise.
+- [x] `test_gates.py` extract assertion flipped in the same change; behaviour owned
+      by new `backend/tests/test_extract.py` (11 tests).
+- **Threading (beyond the brief, required by §1.8.3):** `files` + `workspace` pass
+  through verbatim — the pipeline threads verbatim, so M6-real's hash
+  re-verification depends on keys only M5 can carry forward.
 
 **Size:** L. **Needs:** M4, M11. **Risk:** criteria quality is the demo's credibility —
 prompt and parse-robustness work dominates. **Watch:** the ISO 29148 gate is a *filter*,
@@ -693,6 +699,11 @@ model in the loop** (this is a headline claim; a model call here breaks it). **C
 
 **Size:** M. **Needs:** M5. **Note:** a pure-Python parse is a selling point in the
 pitch ("the extraction loop has no model in it") — keep it pure.
+
+**Session 25 (R4 pass-through, landed on `refactor`):** stub threads `criteria` /
+`files` / `workspace` (§1.8.3) and anchors one `unresolved` ast entry per criterion.
+No-LLM AC ticked (source-asserted in new `test_parse.py`); stdlib-parse and gherkin
+ACs stay open for M6-real. `test_gates.py` parse assertion flipped in the same change.
 
 ### M7 — Stage 4 Parallel verify — **the XL module, split it**
 
@@ -738,6 +749,14 @@ Agree the `findings` shape between them **before** either starts — that is M1'
 
 **Size:** XL — do not attempt alone. **Needs:** M6, M11, M12.
 **Risk:** highest in the project. If M7 slips, the demo has a spine with no muscle.
+
+**Session 25 (R4 mock stub, landed on `refactor` — probes still out of scope):**
+`verify.py` emits the verbatim §1.7 demo findings for AC-1/AC-2 and `undetermined`
+for anything else, with machine-readable provenance (`mode: "mock"`,
+`tokens_spent: 0`), and threads `criteria` (§1.8.3 — without this M8 emits
+`verdicts: []`, the fail-open the threading contract exists to prevent).
+Runbook must state the provenance next to the demo (Convention 4); no AC above
+is claimed by this stub. `test_gates.py` verify assertion flipped in the same change.
 Consider a reduced demo scope: 1 criterion group, 2 probes, mock-first, live as a
 stretch (**D12**).
 
@@ -749,17 +768,24 @@ one run-level verdict. **Code:** `backend/app/gates/adjudicate.py` — today
 `verdicts: [CriterionVerdict]` array conforming to `verdict.schema.json`, each with
 `criterion_id`, `verdict`, `evidence_tier`, `locations[]`, `rationale`.
 
-**Acceptance criteria**
-- [ ] Output satisfies `verdict.schema.json` per element (M1 validates).
-- [ ] A criterion with no findings is **not** silently certified: it becomes `PENDING`
-      with a rationale saying it was not examined (rule 6).
-- [ ] `locations[]` aggregates every location examined, not just the deciding one.
-- [ ] `rationale` is non-empty and criterion-specific. The rationale is the artefact an
-      auditor reads; "looks fine" is a defect.
-- [ ] Run-level verdict: CERTIFIED only if every criterion is CERTIFIED; REJECTED if any
-      is REJECTED; else CONDITIONAL if any CONDITIONAL; else PENDING (**D3**).
-- [ ] `test_gates.py::test_adjudicate_returns_pending_verdict` updated in the same change;
-      add table-driven tests for the aggregation rules above.
+**Acceptance criteria (Session 25 — landed on `refactor`, R4 thin slice)**
+- [x] Output satisfies `verdict.schema.json` per element — asserted with
+      `jsonschema` in `test_adjudicate_verdicts_conform_to_the_verdict_contract`.
+- [x] A criterion with no findings becomes `PENDING` "not examined" (rule 6);
+      `verdicts: []` resolves to run-level `PENDING`, never fail-open (§1.8.3).
+- [x] `locations[]` aggregates every location examined, not just the deciding one.
+- [x] `rationale` is non-empty and criterion-specific (carries id, verdict, tier,
+      and — for CONDITIONAL — the E4 remainder the ledger would record).
+- [x] Run-level verdict per D3 (CERTIFIED iff all CERTIFIED; REJECTED on any
+      refutation; else CONDITIONAL if any; else PENDING) — table-driven tests.
+- [x] `test_gates.py` adjudicate assertion flipped in the same change; behaviour
+      owned by new `backend/tests/test_adjudicate.py` (13 tests).
+- **Tier interpretation committed (Session 25, recorded because §1.8.4's table is
+  silent on the cell):** higher tiers measure confidence in a *satisfying*
+  implementation — a `refuted` finding with a location is a located
+  contradiction at **E2**, never higher on probe strength (demo-anchored:
+  AC-2 REJECTED@E2). Unrecognised `result` values are fail-closed AND loud
+  (§1.8.1: non-supporting, named in the rationale, tier capped E1).
 
 **Size:** M. **Needs:** M7. **Note:** this is pure logic over M7's output — cheap to
 test exhaustively, and the highest test-coverage value per hour in the project.
@@ -773,23 +799,25 @@ exposure, and `exit_code`. **Code:** `backend/app/gates/emit.py` — today
 `record` conforming to `run.schema.json`, and pointers to (or inline copies of) the
 traceability matrix, ledger, and exposure.
 
-**Acceptance criteria**
-- [ ] `exit_code` is derived, not hard-coded: `0` only for run-level CERTIFIED, `1`
-      otherwise. Keep the current fail-closed default until the derivation is proven.
-- [ ] Traceability matrix conforms to `traceability.schema.json` — criterion to location
-      in both directions, so a reviewer can go from a requirement line to code and back.
-- [ ] Signed record: extend the per-file `sha256` in `store/artifacts.py` to a **cross-file
-      chain** (each artifact carries the previous digest) so tampering is detectable
-      across the run (**D8**). Per-file hashing alone is tamper-evident, not chained.
-- [ ] Review-debt ledger: one entry per `CONDITIONAL` criterion, naming the debt and its
-      owner-if-known. An unrecorded conditional is a contract violation.
-- [ ] Risk-weighted exposure per repo/capability with a decay curve. If the decay curve
-      is not implemented, ship the unweighted number **labelled as unweighted** — do not
-      imply weighting that does not exist.
-- [ ] `record` still echoes the adjudicate output (the existing test asserts
-      `record.stage == "adjudicate"` and `record.verdict`); extend alongside, do not
-      replace.
-- [ ] `test_gates.py::test_emit_blocks_by_default` updated in the same change.
+**Acceptance criteria (Session 25 — thin slice landed on `refactor`; user-scoped
+per the refactor plan, full brief below marked accordingly)**
+- [x] `exit_code` is derived, not hard-coded: `0` only for run-level CERTIFIED, `1`
+      otherwise. Fail-closed default kept for every undecided path.
+- [x] Traceability matrix — criterion to location in both directions; link shape
+      validated against `traceability.schema.json` (run_id attaches at persist, M10).
+- [ ] Signed record / cross-file chain (**out of scope this build**): M14's
+      `prev_digest` seam waits; contracts frozen (D-f) so D15's envelope is unwritten.
+- [ ] Review-debt ledger (**out of scope this build**): no CONDITIONAL occurs in the
+      demo; CONDITIONAL rationales already name the E4 remainder for the ledger to claim.
+- [ ] Risk-weighted exposure (**out of scope this build**): harness dropped (D-a).
+      Shipped instead: an honestly-unmeasured stub (`null` rate + `measured: false`,
+      contract-conforming) — never a synthetic number.
+- [x] `record` echoes the adjudicate output (`stage` + uppercase `verdict`) and extends
+      it (D9 `status`, `measured`, `verdicts`, `traceability`, `exposure`). D16 kept
+      open deliberately — both keys present, badge mismatch not papered over here.
+- [x] `test_gates.py::test_emit_blocks_by_default` kept (still truthful) + extended by
+      new `backend/tests/test_emit.py` (6 tests: derivation table, echo, both-direction
+      traceability, unmeasured exposure, bare-dict tolerance).
 
 **Size:** M. **Needs:** M8, M13, M14. **Note:** the signed record is a moat claim
 ("an evidence format an auditor accepts") — do not ship it unsigned and call it signed.
@@ -1564,3 +1592,19 @@ kept out of this file, per Session 19's precedent.
 - **Branch note:** `refactor` @ `1b5be27`, still not pushed; the `origin/refactor`
   divergence stands (`7f65009` has an identical tree to `a869622`, so the pending
   pull/merge is content-trivial — reconcile before push).
+
+### 2026-09-27 — Session 25 (R4): M5/M6/M7-stub/M8/M9 landed (this session)
+- **Scope as user-confirmed at /start:** wait for M4 merge (done locally as `27ec711`,
+  no network) → include M8 → M9 thin slice → build on `refactor`. M5/M8/M9 ACs ticked
+  above with supersede notes (M5 dual-mode, M9 chain/ledger/exposure); M6 pass-through
+  and M7 mock stub recorded in their sections (no real-probe AC claimed).
+- **Cross-lane contracts honored:** §1.8.3 threading implemented exactly as settled
+  (M5 threads files/workspace; M6 threads criteria; M7-stub threads criteria with
+  mock findings; M8 threads criteria to M9). Custody tests in `test_gates.py` (the
+  file that owns what no single stage owns); chain-order E2E there too, not in
+  M10's `test_pipeline.py`. `verify.py` touched minimally under R4 authority (M7
+  ownerless this build) — probes untouched, still XL and still M7's.
+- **Two interpretations committed and recorded** (not silently assumed): (1) refuted+
+  located caps at E2 (§1.8.4's silent cell; demo-anchored); (2) M5's brief dual-mode
+  ACs are superseded by deterministic extraction (D-c/D-f) — the no-import test is
+  the §11-gap-9 consumer control.

@@ -69,28 +69,116 @@ def test_ingest_handles_empty_payload():
     assert out["files"] == []
 
 
-def test_extract_stub_shape():
+def test_extract_emits_criteria_and_rejected_channels():
+    """Flipped 2026-09-27 (M5 landed): exact equality could not survive — M5
+    threads `files`/`workspace` (§1.8.3) whose values vary. Per-stage behaviour
+    is now owned by `test_extract.py`; what stays here is the cross-module
+    shape every downstream stage reads."""
     out = extract.run({"stage": "ingest", "ok": True, "input_keys": []})
-    assert out == {"stage": "extract", "ok": True, "criteria": []}
+    assert out["stage"] == "extract"
+    assert out["ok"] is True
+    assert out["criteria"] == []
+    assert out["rejected"] == []
 
 
-def test_parse_stub_shape():
-    out = parse.run({"stage": "extract", "ok": True, "criteria": []})
-    assert out == {"stage": "parse", "ok": True, "ast": []}
+def test_parse_threads_criteria_and_anchors_unresolved_ast():
+    """Flipped 2026-09-27 (M6 pass-through): the old exact-equality stub is
+    gone — M6 now threads custody keys and anchors one unresolved entry per
+    criterion. Detail owned by `test_parse.py`; the cross-module keys stay
+    here."""
+    out = parse.run(
+        {"stage": "extract", "ok": True, "criteria": [], "files": [], "workspace": ""}
+    )
+    assert out["stage"] == "parse"
+    assert out["ok"] is True
+    assert out["ast"] == []
+    assert out["criteria"] == []
 
 
-def test_verify_stub_shape():
-    out = verify.run({"stage": "parse", "ok": True, "ast": []})
-    assert out == {"stage": "verify", "ok": True, "findings": []}
+def test_verify_emits_mock_findings_and_threads_criteria():
+    """Flipped 2026-09-27 (R4 M7 stub): mock-backed §1.7 findings with
+    machine-readable provenance, criteria threaded for M8 (§1.8.3)."""
+    out = verify.run({"stage": "parse", "ok": True, "ast": [], "criteria": []})
+    assert out["stage"] == "verify"
+    assert out["ok"] is True
+    assert out["findings"] == []
+    assert out["criteria"] == []
+    assert out["mode"] == "mock"
 
 
-def test_adjudicate_returns_pending_verdict():
+def test_criteria_survive_the_chain_from_extract_to_verify():
+    """§1.8.3 chain of custody, end to end: `criteria` threaded twice is what
+    lets M8 enumerate a criterion M7's dict is the only carrier of. A stage
+    that drops the key breaks a consumer two stages away — this test sits here
+    (not in a per-stage file) because no single stage owns the custody."""
+    bundle = {
+        "stage": "ingest",
+        "ok": True,
+        "input_keys": [],
+        "requirement": (
+            "AC-1: refunds over $100 require supervisor approval. "
+            "AC-2: refund failures must be retried 3 times."
+        ),
+        "files": [],
+        "workspace": "",
+    }
+    ids = ["AC-1", "AC-2"]
+    parsed = parse.run(extract.run(bundle))
+    assert [c["criterion_id"] for c in parsed["criteria"]] == ids
+    verified = verify.run(parsed)
+    assert [c["criterion_id"] for c in verified["criteria"]] == ids
+    assert {f["criterion_id"] for f in verified["findings"]} == set(ids)
+
+
+def test_demo_chain_end_to_end_certified_and_rejected_exit_1():
+    """R4 thin slice, whole spine (§1.7): requirement → criteria → mock
+    findings → ladder → derived exit. AC-1 CERTIFIED@E4, AC-2 REJECTED@E2,
+    run REJECTED, exit 1. Manual chain (not `run_pipeline` — the orchestrator
+    file is M10's; Cody owns the pipeline-level test)."""
+    bundle = {
+        "stage": "ingest",
+        "ok": True,
+        "input_keys": ["action", "diff_paths", "pr", "requirement"],
+        "requirement": (
+            "AC-1: refunds over $100 require supervisor approval. "
+            "AC-2: refund failures must be retried 3 times."
+        ),
+        "files": [],
+        "workspace": "",
+    }
+    emitted = emit.run(adjudicate.run(verify.run(parse.run(extract.run(bundle)))))
+    assert emitted["exit_code"] == 1
+    record = emitted["record"]
+    assert record["verdict"] == "REJECTED"
+    assert record["status"] == "rejected"
+    by_id = {v["criterion_id"]: v for v in record["verdicts"]}
+    assert by_id["AC-1"]["verdict"] == "CERTIFIED"
+    assert by_id["AC-1"]["evidence_tier"] == "E4"
+    assert by_id["AC-2"]["verdict"] == "REJECTED"
+    assert by_id["AC-2"]["evidence_tier"] == "E2"
+    links = {l["criterion_id"]: l for l in record["traceability"]["links"]}
+    assert links["AC-1"]["locations"] == ["src/refund.py:64"]
+    assert links["AC-2"]["locations"] == ["src/refund.py:88"]
+
+
+def test_adjudicate_pending_without_findings():
+    """Flipped 2026-09-27 (M8 landed): the old exact-equality stub is gone —
+    M8 now emits `verdicts[]` + threaded `criteria`. What stays here is the
+    fail-closed default the chain depends on; the ladder lives in
+    `test_adjudicate.py`."""
     out = adjudicate.run({"stage": "verify", "ok": True, "findings": []})
-    assert out == {"stage": "adjudicate", "ok": True, "verdict": "PENDING"}
+    assert out["stage"] == "adjudicate"
+    assert out["ok"] is True
+    assert out["verdict"] == "PENDING"
+    assert out["verdicts"] == []
 
 
 def test_emit_blocks_by_default():
-    """Non-zero exit blocks the merge — the safe default for a gate (§4.4)."""
+    """Non-zero exit blocks the merge — the safe default for a gate (§4.4).
+
+    Still true after M9 landed (Session 25): `exit_code` is derived, and the
+    derivation keeps 1 for every non-CERTIFIED path. Derivation cases live in
+    `test_emit.py`; what stays here is the default plus the record echo."""
     out = emit.run({"stage": "adjudicate", "ok": True, "verdict": "PENDING"})
     assert out["stage"] == "emit"
     assert out["ok"] is True
