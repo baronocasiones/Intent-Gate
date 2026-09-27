@@ -55,6 +55,7 @@ hold is not holding.
 
 import errno
 import os
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -276,3 +277,138 @@ def enforce_workspace_readonly(path: str | os.PathLike) -> WriteProof:
             f"{proof.mount_witness})"
         )
     return proof
+
+
+# The rights Windows can deny without also denying the read. Measured on
+# Windows 11 / Python 3.12, each combination probed against a real directory
+# holding a real file (see test_workspace_provisioning.py, which re-measures
+# them rather than trusting this comment):
+#   (OI)(CI)W    -> read/list/create/modify all refused: W is a GENERIC write
+#                  and lands as a deny on every access, so the workspace
+#                  becomes unreadable. Useless as a read-only control.
+#   (OI)(CI)(WD) -> read and list fine; create/modify refused, but a
+#                  pre-existing file can still be unlinked, and a subdirectory
+#                  can still be created in.
+#   (OI)(CI)(D)  -> reads fail too. Windows will not give "readable but
+#                  undeletable" from a simple deny ACE.
+# So the deny is the specific, inheriting write/delete-child set, which is the
+# most a plain ACL can express here. The one thing it does not stop is
+# unlinking a file that was already there, and that gap is named in
+# `ensure_readonly_workspace` and in the record's `no_write_bit` mechanism
+# rather than papered over: a permission on one directory is not a read-only
+# mount, and the D6 bind mount (M10) is the control that closes it.
+_WINDOWS_DENY_RIGHTS = "(OI)(CI)(WD,AD,DC)"
+
+# The variable naming the directory a run verifies against, and the
+# product-owned directory used when it is unset. Both are named here for the
+# same reason `ATTESTOR_CAPS_ENV` is named in policy.py: so the call site never
+# hardcodes the string, and so a rename has exactly one home to change.
+WORKSPACE_ENV = "ATTESTOR_WORKSPACE"
+DEFAULT_WORKSPACE = "./attestor_workspace"
+
+_PROVISIONED_ONCE_ATTR = "_attestor_provisioned"
+
+
+def _deny_write_windows(root: Path) -> None:
+    """Deny the current user write access to `root` and everything under it.
+
+    `icacls` is a Windows system binary that ships with the OS, invoked with an
+    argument list and never through a shell, so this adds no dependency
+    (rule 9). The owner keeps WRITE_DAC throughout — the deny is a data-access
+    deny, not a DACL deny — so `restore_workspace_writable` can lift it without
+    elevation.
+
+    Any failure raises. A provisioning step that quietly did nothing would turn
+    the re-probe in `ensure_readonly_workspace` into a test of the provisioning
+    that never happened.
+    """
+    user = os.environ.get("USERNAME")
+    if not user:
+        raise PermissionError(
+            "attestor workspace cannot be made read-only - USERNAME is unset, "
+            "so there is no account to deny write access to"
+        )
+    proc = subprocess.run(
+        ["icacls", str(root), "/deny", f"{user}:{_WINDOWS_DENY_RIGHTS}"],
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "no output").strip()
+        raise PermissionError(
+            f"attestor workspace cannot be made read-only - icacls refused: {detail}"
+        )
+
+
+def _deny_write(root: Path) -> None:
+    """Apply this platform's permission-level write denial to `root`.
+
+    POSIX clears the write bits (0555); Windows denies write and delete-child
+    to the current user through the directory ACL. Both are `no_write_bit`
+    class: a permission its owner can lift, which the record says in exactly
+    those words and never as a read-only mount.
+    """
+    if os.name == "nt":
+        _deny_write_windows(root)
+        return
+    try:
+        os.chmod(root, 0o555)
+    except OSError as exc:
+        raise PermissionError(
+            f"attestor workspace cannot be made read-only - chmod refused: {exc.strerror or exc}"
+        ) from exc
+
+
+def restore_workspace_writable(path: str | os.PathLike) -> None:
+    """Undo `ensure_readonly_workspace`: owner write bit back on POSIX, the deny
+    ACE removed on Windows. Strict, not best-effort, because a teardown that
+    quietly left a directory read-only poisons every later tmp cleanup and the
+    next failure would be attributed to something else entirely.
+    """
+    root = Path(path)
+    if os.name == "nt":
+        user = os.environ.get("USERNAME", "")
+        proc = subprocess.run(
+            ["icacls", str(root), "/remove:d", user],
+            capture_output=True,
+            text=True,
+        )
+        if proc.returncode != 0:
+            detail = (proc.stderr or proc.stdout or "no output").strip()
+            raise PermissionError(
+                f"attestor workspace restore refused - icacls refused: {detail}"
+            )
+        return
+    mode = os.stat(root).st_mode
+    os.chmod(root, mode | 0o200)
+
+
+def ensure_readonly_workspace(path: str | os.PathLike) -> WriteProof:
+    """Make `path` refuse writes, prove that it does, and return the proof.
+
+    Probe-first, so the function is idempotent: a workspace the kernel already
+    refuses is returned untouched, with no chmod and no ACL change, and its
+    recorded mechanism stays whatever it already was. Only a workspace that
+    accepted the forbidden write is provisioned, which keeps a read-only mount
+    (the D6 mechanism, and the stronger control) from being downgraded to a
+    write-bit permission just because this function ran.
+
+    The second probe is the authority. Provisioning is a promise; a refused
+    write is evidence, and the proof this returns comes from the probe, not
+    from the exit code of whatever applied the denial. Anything short of a
+    witnessed refusal raises `PermissionError` — still writable after
+    provisioning (under root on POSIX, where the write bit is advisory, this
+    always refuses), or unprobeable because there is no directory to attest to.
+
+    What this installs is a `no_write_bit` control and the record says so. On
+    Windows one mutation survives it: unlinking a file that was already in the
+    workspace, because Windows declines to express "readable but undeletable"
+    from a plain deny ACE (measured, not assumed — see
+    `_WINDOWS_DENY_RIGHTS`). Reads, listings, creates, modifications, new
+    subdirectories and subdirectory writes are all refused for real. The
+    long-lived boundary that has no such gap is M10's read-only bind mount,
+    which is why the record names this mechanism as the weaker thing it is.
+    """
+    if probe_workspace_readonly(path).writable:
+        _deny_write(Path(path))
+    return enforce_workspace_readonly(path)
