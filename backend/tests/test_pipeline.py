@@ -1,10 +1,16 @@
 """Pipeline + job queue — docs/architecture.md §1, §4 (as coded) and §11.1.
 
-The jobs queue is *intentionally unwired* (§11.1): submit() enqueues but no
-worker is ever started by the app. These are characterization tests — they
-pin today's behavior and must be updated deliberately when the queue lands.
+The jobs queue was *intentionally unwired* (§11.1) until the M15 core slice:
+`enqueue_run` now persists a `queued` row and submits, and the app lifespan
+starts `worker()`. The old "worker is never started by the app" characterization
+flipped in the same change (modules.md rule 7) — it now pins the wiring instead
+of its absence.
 """
+import json
 import re
+from pathlib import Path
+
+import pytest
 
 from app.orchestrator.pipeline import enqueue_run, run_pipeline
 
@@ -58,11 +64,13 @@ def test_jobs_submit_enqueues_and_drains_cleanly():
     assert jobs._queue.qsize() == 0
 
 
-def test_worker_is_async_but_never_started_by_app():
-    """§11.1: worker() exists and is a coroutine function, but main.py never
-    schedules it. Asserting absence here means: when wiring lands, this test
-    flips and must be rewritten on purpose."""
+def test_worker_is_coroutinefunction_and_lifespan_starts_it():
+    """FLIPPED (M15 core slice): worker() is started by main.py's lifespan and
+    cancelled again at shutdown. The old assertion (`"jobs" not in vars(main)`)
+    pinned the unwired queue and was rewritten deliberately (rule 7)."""
     import inspect
+
+    from fastapi.testclient import TestClient
 
     from app.orchestrator import jobs
 
@@ -71,7 +79,64 @@ def test_worker_is_async_but_never_started_by_app():
     # `async def` with no `markcoroutinefunction` decorator, which is the only
     # case where the two disagree.
     assert inspect.iscoroutinefunction(jobs.worker)
-    # main.py imports only the routers — no jobs import at app entry:
     from app import main
 
-    assert "jobs" not in vars(main)
+    assert "jobs" in vars(main)  # lifespan wiring lives in main.py (M15 owns it)
+
+    with TestClient(main.app):
+        assert main._worker_task is not None
+        assert not main._worker_task.done()
+    # shutdown cancels the task and clears the handle
+    assert main._worker_task is None
+
+
+def test_enqueue_run_persists_queued_row_and_submits():
+    """M15 core slice: the id is no longer minted into the void — the row is
+    listable immediately and the queue gains exactly one item."""
+    from app.orchestrator import jobs, pipeline
+
+    before = jobs._queue.qsize()
+    run_id = enqueue_run({"pr": 1})
+
+    assert jobs._queue.qsize() == before + 1
+    row = pipeline.fetch_run_row(run_id)
+    assert row is not None
+    assert row["status"] == "queued"
+    assert row["artifact_path"] is None
+
+
+def test_run_pipeline_persists_row_and_artifact():
+    """The synchronous path persists exactly like the queued one: row flipped
+    to the lowercased verdict (D9 default), artifact written with a sha256."""
+    from app.orchestrator import pipeline
+
+    run_id = enqueue_run({"pr": 7})
+    run_pipeline({"pr": 7}, run_id=run_id)
+
+    row = pipeline.fetch_run_row(run_id)
+    assert row["status"] == "pending"  # stub verdict PENDING -> D9 lowercase
+    assert row["artifact_path"] is not None
+
+    data = json.loads(Path(row["artifact_path"]).read_text(encoding="utf-8"))
+    assert data["stage"] == "emit"
+    assert data["exit_code"] == 1  # fail-closed default (§1.5)
+    assert len(data["sha256"]) == 64
+
+
+def test_run_pipeline_marks_run_failed_when_a_stage_raises(monkeypatch):
+    """Rule 6: a crash must not leave a run looking alive or certified. The
+    exception still propagates — it is never swallowed to get to green."""
+    from app.orchestrator import pipeline
+
+    class Boom:
+        @staticmethod
+        def run(payload):
+            raise RuntimeError("stage exploded")
+
+    monkeypatch.setattr(pipeline, "ingest", Boom)
+
+    run_id = enqueue_run({})
+    with pytest.raises(RuntimeError, match="stage exploded"):
+        run_pipeline({}, run_id=run_id)
+
+    assert pipeline.fetch_run_row(run_id)["status"] == "failed"

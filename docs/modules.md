@@ -855,33 +855,57 @@ reports whether the suite catches them. Useful for M17; it is **not** repo code.
 ### M15 — API surface
 
 **Purpose:** the four endpoints plus static hosting — the whole external contract.
-**Code:** `backend/app/routers/webhooks.py` (live), `runs.py` and `metrics.py` (stubs),
-`backend/app/main.py`. **Today:** `POST /webhooks/github` accepts any JSON (real
-delivery or hand-injected demo body on the same path) and mints an id; `GET /api/runs`,
-`/api/runs/{id}`, `/api/metrics` return hard-coded stubs. **Known defect:** `main.py`
-resolves `frontend/dist` by climbing **three** levels from `backend/app/`, landing outside
-the project, so the static mount silently never activates even when the dashboard is
-built.
+**Code:** `backend/app/routers/webhooks.py` (live), `runs.py` and `metrics.py` (**live as
+of the core slice, 2026-09-27**), `backend/app/main.py`. **Today:** `POST /webhooks/github`
+accepts any JSON (real delivery or hand-injected demo body on the same path), mints an id,
+persists a `queued` row and submits to the queue; `GET /api/runs` lists rows newest-first,
+`GET /api/runs/{id}` returns the envelope + artifact pointers (404 unknown), `GET /api/metrics`
+aggregates M13's function over stored mutation results (none stored yet → honest unmeasured).
+The `_dist` defect is **fixed** (two levels, behind `_resolve_dist()` / `mount_dashboard()`,
+proven by tests), and the lifespan starts `jobs.worker()`.
 
 **Acceptance criteria**
-- [ ] `GET /api/runs` lists real rows (newest first) from M14; `GET /api/runs/{id}`
+- [x] `GET /api/runs` lists real rows (newest first) from M14; `GET /api/runs/{id}`
       returns the run envelope plus artifact pointers, and a `404` for an unknown id
       (**today it echoes any id with `status: "pending"`** — that is a stub, not a lookup).
-- [ ] `GET /api/metrics` aggregates M13's function over stored mutation results and keeps
-      the exposure contract's three keys exactly (a test pins the key set).
-- [ ] **Fix the `_dist` path** (two levels, not three) and prove it: a test that the
-      mount appears when a `dist` directory exists is the honest fix, not a comment.
+      — *core slice 2026-09-27: row + artifact pointer + 404 (500 if the artifact file a
+      row points at is missing — a defect must not read as empty); `created_at` pinned as
+      an ISO-8601 string, which doubles as M14's owed type test.*
+- [x] `GET /api/metrics` aggregates M13's function over stored mutation results and keeps
+      the exposure contract's three keys exactly (a test pins the key set). — *core slice:
+      reads `{operator, verdict}` artifacts from `ARTIFACT_DIR` (the M13 wiring point;
+      formal envelope is D15's to define); with no results it returns `{null, false, 7×zeroed}`
+      — never `0.0`. The old stub asserted `by_operator == {}`; the guard now pins the
+      seven zeroed buckets instead.*
+- [x] **Fix the `_dist` path** (two levels, not three) and prove it: a test that the
+      mount appears when a `dist` directory exists is the honest fix, not a comment. —
+      *core slice: `_resolve_dist()` is asserted equal to `<repo>/frontend/dist`, and
+      `mount_dashboard()` is proven to mount when the directory exists (without shadowing
+      earlier routes) and not to when it does not.*
 - [ ] Webhook: verify the GitHub signature when a secret is configured (**D7**), keep the
       injected-payload path working with no secret (demo survival), and submit the run
-      to the queue (needs M10 + the `main.py` lifespan change).
+      to the queue (needs M10 + the `main.py` lifespan change). — *queue submit + lifespan
+      DONE in the core slice; **HMAC/D7 not started** (outside the confirmed scope); the
+      no-secret injection path keeps working and is test-pinned.*
 - [ ] GitHub write-back (PR comment + check run) is a **stretch** (**D13**), not a P0 —
       the non-zero exit is the merge-blocking claim and it already works.
-- [ ] Flip the three stub-response tests in `test_api.py` in the same change (rule 7);
+- [x] Flip the three stub-response tests in `test_api.py` in the same change (rule 7);
       the route-table test must keep passing (no routes added or removed without
-      updating it).
+      updating it). — *core slice: three stubs replaced (list lookup / 404+envelope /
+      metrics aggregation), five more tests added; route-table test untouched and green.
+      `test_pipeline.py`'s unwired-queue characterization flipped in the same change.*
 
 **Size:** M. **Needs:** M10, M13, M14. **Note:** M15 owns `main.py`, so M10 and any
 lifespan work must go through here.
+
+**Core-slice deviation record (2026-09-27, Session 22):** with the user's approval, the
+M10/M14 glue was added as a **minimal shim** rather than waiting for those modules: the
+persistence helpers live in `orchestrator/pipeline.py` (shim-touched) and
+`backend/tests/conftest.py` (new file) isolates every test's DB + artifacts to `tmp_path`.
+`db.py`, `store/artifacts.py`, `config.py` and the contracts were not edited. Final run
+status follows the D9 recommended default with one recorded deviation: a `PENDING` verdict
+maps to `pending` (D9's set has no "not yet decided" value; `failed` would misreport a
+fail-closed default as a crash).
 
 ---
 
@@ -923,8 +947,9 @@ sat outside M2's write scope:
    copies against each other; it cannot guard a third copy written in JS.
 2. Feed `fixtures/demo_exposure.json` to `ExposureCard` so the mutation number is displayed.
    `App.jsx` seeds `metrics` as `{false_certified_rate: null, measured: false}` and only
-   `fetchMetrics()` can change it, and `GET /api/metrics` still returns a hard-coded stub
-   (`architecture.md` §11.2) — so nothing on screen shows 0.25 today.
+   `fetchMetrics()` can change it, and `GET /api/metrics` (live since M15's core slice)
+   returns the honest *unmeasured* envelope while no mutation results are stored —
+   so nothing on screen shows 0.25 today.
 3. **Defect, verified, not fixed — M16's files.** `App.jsx:23` passes `run.status` into
    `<VerdictBadge>`, but `VerdictBadge.jsx:2` compares it against the uppercase verdict enum
    (`'CERTIFIED'` / `'REJECTED'`). A D9-conformant lowercase status matches neither branch
@@ -1517,3 +1542,29 @@ kept out of this file, per Session 19's precedent.
 
 
 
+### 2026-09-27 — M15: API surface core slice (branch `api-surface`)
+
+> **Heading relabelled per `AGENTS.md` Convention 18 (date + module)** — the draft called
+> this "Session 22", which collides with the other "Session 22" entries carried from
+> parallel sessions (see the same note in `architecture.md`'s log).
+
+- `/start` instruction: *"create the api surface module, create a new branch"* → target **M15**,
+  branch **`api-surface`** (confirmed spelling), scope confirmed before execution as the
+  **core slice** (`_dist` fix + real DB listing + queue submit) with **minimal M10/M14 shims**.
+- **Landed:** §M15 above — four checkboxes marked (`runs` list/detail+404, `metrics`
+  aggregation, `_dist` fix, guard flips). Deferred by scope choice: **HMAC/D7** and
+  **write-back/D13** (still open, D13 remains a stretch).
+- **Shim record:** persistence glue in `orchestrator/pipeline.py`, queue envelope +
+  lifespan worker, `tests/conftest.py` (new) isolating DB/artifacts to `tmp_path`.
+  `db.py`, `store/artifacts.py`, `config.py`, contracts: untouched. D9 taken as the
+  recommended default with the recorded `pending` deviation (see §M15).
+- **Baseline finding carried forward:** `test_policy.py` fails **12/12 on this Windows
+  machine on `main` before any M15 change** — M12's sandbox probes POSIX read-only
+  directories and `chmod` is unenforced on directories by Windows. Platform gap, owner
+  M12/M17; not patched (rule 8). Also fixed one pre-existing stale guard in
+  `test_models_parity.py` (M2 upgraded the fixture; the E0/empty-locations assertions
+  were never flipped) — the fixture is the truth, the assertion was wrong.
+- **Verification:** 179 passed / 12 failed (only the M12-Windows set above) on a fresh
+  fully-pinned venv; contract validator 6/6 exit 0; live uvicorn smoke of the whole
+  webhook → queue → worker → artifact → runs → metrics path.
+- Decisions still open: D1–D13, D15 unchanged by this session.

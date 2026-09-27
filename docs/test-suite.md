@@ -74,9 +74,10 @@ pyproject.toml                     pytest config only (not an installable packag
 backend/requirements.txt           runtime + test deps (pytest 9.0.3, pytest-asyncio 1.4.0)
 backend/tests/
   __init__.py                      makes pytest put backend/ on sys.path (imports are `app.*`)
+  conftest.py                      autouse isolation: DB + artifacts → tmp_path, queue drained (M15)
   test_scaffold.py                 Session-11 smoke tests (pipeline, policy, metric-empty)
   test_gates.py                    §3 stage stubs: shapes, stage order, exit_code=1 blocks
-  test_pipeline.py                 §1/§4 chaining, run-id format, §11.1 unwired-queue characterization
+  test_pipeline.py                 §1/§4 chaining, run-id format, queue wiring + persistence (flipped M15)
   test_policy.py                   §8 attestor: the 5-grant/2-deny sets, fail-closed both ways,
                                    the worker-capability resolver, the real workspace write-probe
                                    (which mechanism refused + the mount's own ST_RDONLY answer),
@@ -85,7 +86,7 @@ backend/tests/
   test_llm.py                      §7 mock determinism; watsonx fails loud; zero-network proof
   test_schemas_contracts.py        §10 pydantic↔contract parity, fixture validation, validator wrap
   test_models_parity.py            M3 model↔contract bijection, field coverage, strictness + honesty pins
-  test_api.py                      §5 route table + health/webhook/stub endpoint shapes
+  test_api.py                      §5 route table + health/webhook + live runs/metrics + _dist mount (M15)
   test_store_db.py                 §6 WAL mode, runs table, env wiring, commit discipline, sha256 envelope + D8 seam
   test_store_records.py            §6 typed reads, envelope→RunRecord projection, strict-model loads
   test_config.py                   §3 env defaults/overrides, MOCK_LLM parsing, reload-restore
@@ -192,10 +193,9 @@ the attestor box ↔ `test_policy.py`, the metering note ↔ `test_llm.py` /
 
 - **Frontend**: `frontend/` has no test script or runner — dashboard is
   uncovered (out of scope for this session).
-- **§11 open gaps**: unwired job queue, stub routers (`runs`/`metrics` return
-  hard-coded values), `watsonx_client` past the key check, the `_dist`
-  three-level-climb defect in `main.py` — characterized or explicitly
-  untested, never asserted as correct.
+- **§11 open gaps**: `watsonx_client` past the key check. (The unwired queue, stub
+  routers and the `_dist` three-level climb were closed by M15's core slice —
+  their characterization tests were flipped in the same change, per convention 4.)
 - **`app.attestor` has no non-test caller** (Session 22). `enforce_worker_read_only`
   is covered thoroughly here and invoked by nothing — the wiring belongs to M7/M10,
   and M9 owns embedding `PolicyRecord.to_dict()` in the emitted record. The gap is
@@ -208,8 +208,10 @@ the attestor box ↔ `test_policy.py`, the metering note ↔ `test_llm.py` /
   `os.statvfs` — named as a substitution in the test, per the module docstring's
   inventory. A real mount is not something CI can produce, so the reading stays
   synthetic; when M10 deploys the D6 bind mount, that is where it gets proven for real.
-- **Async jobs/worker**: `jobs.worker()` is an infinite loop with no test
-  harness yet — add one when the queue is wired.
+- **Async jobs/worker**: the lifespan start/cancel path and the persistence side of
+  the queue are covered (`test_pipeline.py`), but the worker's "one failed run must
+  not kill the queue" branch is exercised only indirectly — add a direct harness when
+  M10 does its full pass.
 - **Python 3.10 floor**: dependency floor (fastapi/uvicorn/jsonschema/pytest
   all require ≥3.10) is not in the CI matrix; add if floor support matters.
 - **No fixture pair for `criterion` or `exposure`** (M1 AC 1, open). The mirrors
@@ -791,3 +793,34 @@ failure** on both legs (the failure re-proven pre-existing on parent
   (B) the index test pinned the index **name** (`index_list`) but not its **target column** — `ON runs(id)` passed; `PRAGMA index_info` assertion added.
   (C) `test_list_runs_newest_first` could not distinguish `created_at DESC` from `id DESC` (its ids sort in insertion order, so both orderings satisfy the expectation) — added deterministic `test_list_runs_orders_by_created_at_not_id` with a **mocked clock** and reverse-sorted ids, so the three candidate orderings disagree without a microsecond race.
   Count **39 → 40** (33 + 7). Re-verified from scratch: **210 passed + the same 1 pre-existing failure on both 3.11.9 and 3.12.14**, validator exit 0 both legs, tree clean except the one test edit, no pollution; **the §11.15 failure re-proven pre-existing on parent `4b03c55`** via a throwaway worktree (fails there too); mutation proof rerun under Session 21's harness rules (control green, which-test-id reported) — **9/9 killed, 0 survivors, no collection errors**, including MUT6→(B), MUT7/MUT9→(C), MUT8→(A) — each new/strengthened guard seen failing before it was trusted (Convention 7).
+### 2026-09-27 — M15: API surface core slice (branch `api-surface`)
+
+> **Heading relabelled per `AGENTS.md` Convention 18 (date + module)** — the draft
+> called this "Session 22", which collides with the other "Session 22" entries this
+> log now carries from parallel sessions (see `architecture.md`'s log for the full note).
+
+- **Layout:** added `backend/tests/conftest.py` (M15-session-created, M3 deviation pattern —
+  `backend/tests/` is M17's path and this is a new file, not an edit to one of M17's).
+  It is **autouse**: every test's `pipeline.DB_PATH` + `artifacts.ARTIFACT_DIR` go to
+  `tmp_path` and the module-level queue is drained before/after each test. Required
+  because product code now persists (Convention 3) and webhook tests enqueue for real
+  (`test_pipeline.py`'s queue-starts-empty assertion depends on the drain).
+- **Flipped, per convention 4, in the same change as the code:** the three `test_api.py`
+  stub-response tests (list / detail-echo / metrics shape) and `test_pipeline.py`'s
+  `test_worker_is_async_but_never_started_by_app` (→ `..._and_lifespan_starts_it`).
+  `test_route_table_matches_documented_surface` unchanged and still passing. Added:
+  webhook-persists, runs-empty/newest-first, detail-404, envelope+artifact-pointer,
+  queued-no-artifact, metrics-unmeasured, metrics-aggregation, `_dist` path oracle,
+  mount-on/off, enqueue-persists, run-persists, crash→`failed`.
+- **Stale guard fixed outside M15 (rule 8):** `test_models_parity.py::test_demo_traceability_fixture_loads_into_model`
+  pinned the pre-M2 fixture (`E0`, empty locations) — **already failing on main before this
+  session** (baseline 13 failed / 167 passed). Fixed to the fixture's actual E4/E2 + locations.
+- **Result:** **179 passed / 12 failed** on Python 3.12.10 in a fresh venv built from the
+  fully-pinned `requirements.txt` (built in `%TEMP%`, so no venv polluted the tree);
+  validator exit 0 (6/6). **All 12 remaining failures are pre-existing on `main`**:
+  `test_policy.py` — M12's sandbox probes POSIX read-only directories and Windows does not
+  enforce `chmod` on directories, so the probe finds them writable and fails closed.
+  Platform gap (Linux CI expected green), owner M12/M17, **reported not patched**.
+- **New convention worth carrying:** when product code gains a side effect (DB/artifact/queue),
+  isolate it in the autouse conftest rather than in each test — one patch point, and the
+  cleanliness gate stops depending on every future test author remembering Convention 3.
