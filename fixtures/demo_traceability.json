@@ -1,7 +1,7 @@
 {
   "run_id": "demo",
   "links": [
-    { "criterion_id": "AC-1", "locations": [], "evidence_tier": "E0" },
-    { "criterion_id": "AC-2", "locations": [], "evidence_tier": "E0" }
+    { "criterion_id": "AC-1", "locations": ["src/refund.py:64"], "evidence_tier": "E4" },
+    { "criterion_id": "AC-2", "locations": ["src/refund.py:88"], "evidence_tier": "E2" }
   ]
 }
