@@ -83,7 +83,7 @@ at `/` **only if that directory exists** (API-first otherwise).
 | Stage 4 Verify | `backend/app/gates/verify.py::run(ast)` | stub: `{"stage": "verify", "ok": True, "findings": []}`. Spec: N workers (OS processes, not model subagents), 5 static probes (`CODE_SEARCH`, `LOGIC_TRACE`, `STATE_CHECK`, `ERROR_PATH`, `ABSENCE_CHECK`) + adversarial pass over **6 named** failure classes (boundary · omission · contradiction · implicit · negative · concurrency); LLM via watsonx.ai only |
 | Stage 5 Adjudicate | `backend/app/gates/adjudicate.py::run(findings)` | stub: `{"stage": "adjudicate", "ok": True, "verdict": "PENDING"}`. Spec: E0–E6 ladder → `CERTIFIED` / `CONDITIONAL` / `REJECTED` |
 | Stage 6 Emit+gate | `backend/app/gates/emit.py::run(verdict)` | stub: `{"stage": "emit", "ok": True, "exit_code": 1, "record": verdict}`. Spec: traceability matrix, signed hash-chained record, debt ledger, risk-weighted exposure; non-zero exit blocks merge |
-| Read-only policy | `backend/app/attestor/policy.py` — `GRANTS={read,subagent,skill,workflow}`, `DENIES={edit,execute}`, `assert_read_only(granted)` | raises `PermissionError` on leaked denies or missing grants. Enforced in tests only today, not in the pipeline path (see §11) |
+| Read-only policy | `backend/app/attestor/policy.py` — `HARNESS_GROUPS={read,subagent,skill,workflow}` + `OS_PROPERTIES={llm_egress}` (5 grants), `DENIES={edit,execute}`, `resolve_worker_caps(declared)`, `assert_read_only(granted)`, `policy_record(caps, *, enforcement_applied, proof)`; `backend/app/attestor/sandbox.py` — `probe_workspace_readonly` / `enforce_workspace_readonly` | raises `PermissionError` on leaked denies or missing grants, and on a workspace that is writable or unprobeable. Built and tested; **zero product callers** — no gate or orchestrator invokes it (see §11.5) |
 | LLM — live | `backend/app/llm/watsonx_client.py::complete(prompt, max_tokens=512)` | raises `RuntimeError` when `WATSONX_API_KEY` unset; otherwise raises `NotImplementedError` — IAM exchange + generation call land after the research spike |
 | LLM — mock | `backend/app/llm/mock_client.py::complete(...)` | deterministic `'{"verdict": "PENDING", "rationale": "mock — no live call"}'`; zero spend |
 | Metric | `backend/app/metrics/false_certified.py` — `OPERATORS` (7) + `false_certified_rate(results)` | `P(CERTIFIED \| spec violation present)`; returns `{false_certified_rate, measured, by_operator}`; `measured = total > 0`; `None` rate when empty |
@@ -133,7 +133,47 @@ No auth, no SSE/polling, no GitHub comment/check-run write-back yet (all were ol
 
 ## 8. Read-only attestor (differentiator, as coded)
 
-`GRANTS = {read, subagent, skill, workflow}`; `DENIES = {edit, execute}`. `assert_read_only()` fails closed on either leak or incompleteness. The N-worker fan-out in Stage 4 is N **OS processes**, not model-invoked subagents (this is what the Figure 6 footer note means; the fleet-flags string `--disable-subagents` vs the granted `subagent` cap is a known wording tension kept as-is from Session 7). **Never weaken this in demo shortcuts** (standing convention).
+Two layers, and the second one is the point.
+
+**Declaration** (`attestor/policy.py`): `HARNESS_GROUPS = {read, subagent, skill,
+workflow}` plus `OS_PROPERTIES = {llm_egress}` — five tokens, and the split between
+them is structural, not a comment. `DENIES = {edit, execute}`, and no session has
+moved that. `resolve_worker_caps()` parses the `ATTESTOR_CAPS` env declaration and
+fails closed on anything absent, empty, non-`str`, or outside the closed vocabulary.
+`assert_read_only()` is a set comparison that fails closed on a leak **or** a gap — and
+on its own it proves nothing, because a set comparison against a constant can only fail
+if the set came from somewhere else. Which is why the second layer exists.
+
+**Observation** (`attestor/sandbox.py`): `probe_workspace_readonly()` attempts the
+forbidden write and reports what the kernel did. `EROFS` and `EACCES` are two
+spellings of "refused" and both count; `ENOENT`/`ENOTDIR` is `undetermined`, which is a
+failure flagged as one and never reported as safety. A refused write is **two different
+findings**, so the probe names which: `read_only_mount` (the D6 mechanism — a boundary
+the worker cannot lift) or `no_write_bit` (a permission on one inode, which whoever owns
+the directory can restore). Independently, `os.statvfs` is asked whether the mount
+holding the workspace is mounted read-only; that answer is `True`, `False`, or `None`
+for "we could not ask", and `None` is never rounded to `False`. **The write is the
+authority and the flag is only corroboration** — it is read after the write and cannot
+override it, so a workspace that accepted the forbidden write stays `writable`.
+
+`PolicyRecord` is the auditor fragment M9 embeds, now 10 keys: the capabilities, the
+two sets, `enforcement_applied`, `workspace_readonly`, `workspace_witness`, and the
+four added in Session 22 — `workspace_path` (the directory actually probed),
+`workspace_mechanism`, `workspace_mount_readonly`, `workspace_mount_witness`. It is
+frozen, clock-free and hashable, so repeated runs against one workspace agree. It is no
+longer environment-free: the same run on two machines produces different bytes here,
+which is an accepted cost of naming the workspace. `policy_record()` refuses to mint a
+record claiming enforcement without a proof, or carrying a denied capability on either
+path. `enforce_worker_read_only()` is the one worker-startup call, and it raises rather
+than returning, so a worker that cannot prove read-only never starts.
+
+**The N-worker fan-out in Stage 4 is N OS processes**, not model-invoked subagents
+(Figure 6's footer note; the fleet-flags string `--disable-subagents` vs the granted
+`subagent` cap is a known wording tension kept as-is from Session 7). **Never weaken
+this in demo shortcuts** (standing convention).
+
+**Unwired.** `app.attestor` is imported by `test_scaffold.py` and `test_policy.py` and
+by **nothing else** — no gate, orchestrator or router. §11.5 is the open item.
 
 ## 9. Publishable metric (as coded)
 
@@ -158,7 +198,16 @@ wired yet.
 2. `GET /api/runs*` and `GET /api/metrics` return hard-coded stubs; `db.get_db` / `write_artifact` have no callers.
 3. Gates return shape-correct stubs with empty payloads (`criteria: []`, `ast: []`, `findings: []`, `verdict: PENDING`).
 4. `watsonx_client.complete` is `NotImplementedError` past the key check — the integration pattern is now researched and specified in `docs/watsonx-integration.md`, but **no code has been written**.
-5. `assert_read_only` is test-only; pipeline never calls it.
+5. The read-only attestor is **built and unwired** (reworded 2026-09-27, Session 22;
+   the old text said "`assert_read_only` is test-only; pipeline never calls it", which
+   was true but described a set comparison rather than the real gate). `app.attestor`
+   has **zero product callers**: `enforce_worker_read_only()` exists, fails closed, and
+   is exercised only by tests. Two wirings are owed and **both are other modules' files**,
+   so M12 did not make them: M7/M10 call it at worker startup, and M9 embeds
+   `PolicyRecord.to_dict()` in the emitted record. The D6 read-only **bind mount** is
+   also absent — nothing in the repo creates one — though Session 22 made it attestable
+   (the record distinguishes a read-only mount from a missing write bit and reports
+   `ST_RDONLY`).
 6. §2 `_dist` path defect (three-level climb, should be two).
 7. Missing vs spec: GitHub write-back (comments + check runs), review-debt ledger, risk-weighted exposure decay curve, signed cross-file hash chain, SSE/polling, auth, real demo-repo target.
 8. Dependencies pinned in `backend/requirements.txt`: fastapi 0.135.3, uvicorn 0.44.0, pydantic 2.13.0, httpx 0.28.1, jsonschema 4.26.0, pytest 9.0.3, pytest-asyncio 1.4.0. Smoke tests in `backend/tests/test_scaffold.py` (pipeline stub path, policy guard, metric-empty) are the only coverage.
@@ -168,6 +217,7 @@ wired yet.
     - The **Contracts (M1)** box reads "5 JSON Schemas (draft-07)" and "validator covers 2 of 5 pairs". The truth is **6 schemas and 6 pairs**, all covered and enforced.
     - The **Exposure (M9)** box reads "NOT built — exposure schema has no PAIRS entry". That orphan is exactly what Session 18 closed: `exposure.schema.json` now has `contracts/examples/exposure.json` and a `PAIRS` entry. The box is the thing that is wrong, not the code.
     - The generator §1 refers to, `gen_fig6_architecture.py`, **is not committed on any branch**, so the figure can be neither regenerated nor audited mechanically.
+    - **The Attestor (M12) box is also stale, and Session 22 widened the gap.** It shows the four harness groups only; there are five grants (`llm_egress` is the fifth), and the module has a second file the figure has no shape for at all — `attestor/sandbox.py`, the write-probe that turns the read-only claim into an observation. Per the Session 18 rule, **any module that changes a number or a component count the figure prints owes this same audit**, and M12 has now paid that twice: once for the fifth grant, once for the second file.
     By this file's own precedence rule the figure is wrong and the docs are right. The fix is to recover or rewrite the generator and re-run the line-by-line sourcing audit that Session 16 established — **not** to hand-edit the PNG. Owner: unassigned; owed before the figure is shown to anyone.
 
     > **Numbered 11, skipping 10, on purpose.** The open `receipt-renderer` branch
@@ -239,7 +289,7 @@ backend/app/routers/{webhooks,runs,metrics}.py
 backend/app/gates/{ingest,extract,parse,verify,adjudicate,emit}.py
 backend/app/orchestrator/{pipeline,jobs}.py
 backend/app/llm/{watsonx_client,mock_client}.py
-backend/app/attestor/policy.py
+backend/app/attestor/{policy,sandbox}.py
 backend/app/metrics/false_certified.py
 backend/app/models/schemas.py
 backend/app/store/artifacts.py
@@ -755,3 +805,88 @@ was correct throughout; the drift was entirely in prose. All ten are now correct
 - **Follow-up the same day (user instruction: §11.14 now, §11.12 when unblocked):** the
   pinning decision is **taken** — §11.14 above is marked CLOSED with the evidence. The
   §11.12 guards remain open per the instruction, owner still unassigned.
+
+### 2026-09-27 — Session 22: M12 — the attestor policy fits the architecture it is in
+
+- Instruction: *"I am working on the M12 attestor read-only policy. The llm layer is only
+  using mock data for it, because there have been changes"*, clarified to *"update m12 to fit
+  the current system architecture."* Scope was agreed as three named changes before any code
+  was written: **A** attest the D6 mechanism, **B** let the record name the workspace,
+  **C** close the ungated leak. `llm_egress` decided explicitly — keep, and record that
+  nothing exercises it yet.
+- **§8 was two sessions stale and this session found it by reading code, not docs.** The
+  section claimed `GRANTS = {read, subagent, skill, workflow}` and described
+  `assert_read_only` as the whole module. On disk were five grants (with `llm_egress`
+  split structurally into `OS_PROPERTIES`), a second file `sandbox.py` that this file's
+  §12 layout did not list, a capability resolver, a `PolicyRecord` type, and
+  `enforce_worker_read_only`. **None of it had a session-log entry in any doc.** Recorded
+  as a finding reconstructed from source, not as an entry attributed to a session that did
+  not write it. §8, §3's component row, §11.5 and §12 are corrected; `watsonx-integration.md`
+  §6 gets a dated supersession note instead of a rewrite, since it is a research snapshot
+  and this file is the as-built authority.
+- **§11.5 reworded rather than closed, and the distinction matters.** The old text —
+  *"`assert_read_only` is test-only; pipeline never calls it"* — was true and misleading:
+  it described a set comparison when the ungated thing is now a real gate that proves a
+  workspace read-only. `app.attestor` still has **zero product callers**, so the gap does
+  not close. What changed is that the gap is now two named wirings in two other modules'
+  files (M7/M10 at worker startup, M9 embedding the fragment) rather than one missing call.
+- **What actually changed in the code, in one line:** a refused write is two findings and
+  the module said one. `EROFS` (a read-only mount — the D6 boundary) and `EACCES` (a
+  permission on one inode, which its owner can restore) produced the same record, so the
+  probe now names the mechanism and reports the mount's own `ST_RDONLY` answer beside the
+  errno. **The write is the authority; the flag is corroboration and is read after it.**
+  Getting that order wrong would report a workspace read-only immediately after it
+  accepted a write, so it is pinned by a test that makes the write land and the flag lie.
+- **`PolicyRecord` gained four keys** (`workspace_path`, `workspace_mechanism`,
+  `workspace_mount_readonly`, `workspace_mount_witness`), 6 → 10, none renamed or dropped
+  (rule 3). `workspace_mount_readonly` is deliberately three-valued: `None` means "we could
+  not ask" and is never rounded to `False`. **Accepted cost, stated in the code:** the
+  fragment is no longer environment-free, so the same run on two machines differs here.
+- **A real hole, closed.** The ungated record path never consulted `DENIES`, so it would
+  mint a record whose `capabilities` was `["edit"]` while its own `denied` said
+  `["edit","execute"]`. Both paths refuse now. The check was deliberately not extended to
+  completeness — an ungated record legitimately reports a partial set.
+- **Rules honoured deliberately:** rule 7 — no gate, orchestrator, contract, fixture,
+  dependency or `pyproject.toml` file was touched, so the two owed wirings are *requests*,
+  not edits; rule 10 — three guards flipped in the same change, each labelled
+  `CHANGED THIS SESSION`; rule 12 — `os.statvfs` is stdlib, zero new pins; rule 13 —
+  every new test writes under `tmp_path`, and the 0555 fixture still restores its mode.
+- **A false claim in `test_policy.py` and a test that overstated itself, both fixed rather
+  than left.** The module docstring claimed *exactly one* test substituted the OS call;
+  there are now five interactions substituted. The inventory was recounted from the file,
+  and the first draft of that recount said three `statvfs` substitutions where there are
+  four — corrected before it was written down. Separately,
+  `test_the_two_readings_are_reported_separately_not_collapsed` described a contrast
+  between two deployments and asserted one; it now makes both readings and asserts they
+  differ.
+- **Owed, not done:** the D6 **read-only bind mount** — nothing in the repo creates one,
+  owner M10; the two wirings above; the Figure 6 attestor box, now stale in two more ways
+  (§11.11) and still unregeneratable; `AGENTS.md`'s session history, which is **six
+  sessions stale** (ends at Session 15) and is updated only by `/end`.
+- **Verification, same session.** **192 collected, 191 passed**, identical on **3.11.16,
+  3.12.14 and 3.14.7** — both CI-matrix legs had to be provisioned fresh, since neither
+  interpreter was installed on the box and a 3.14 result is not a pass by this repo's own
+  rule. Validator exit 0 on every leg. `test_policy.py` **75 passed, 0 skipped** (baseline
+  63, so +12). Run as uid 1000, so all 21 root-guarded cases executed rather than skipping
+  — the errno/`EACCES` behaviour this change depends on was genuinely exercised. Zero
+  residue, source tree byte-identical before and after. **All seven guards mutation-proven,
+  no survivors**, including the fail-open inversion, which died on the guard's own message
+  rather than incidentally.
+- **The one failure is not this session's and is not "unfinished work".**
+  `test_models_parity.py::test_demo_traceability_fixture_loads_into_model` asserts
+  all-E0 links while M2's merged fixture (`88095b2` → `4b03c55` = HEAD) set E4/E2. It is a
+  **missed test-guard flip in that merge** — `test_schemas_contracts.py` was updated,
+  `test_models_parity.py` was not — and it is **two** stale assertions, not one. Proven
+  pre-existing by running a pristine `git archive HEAD` extraction: `1 failed, 179 passed`
+  with M12 absent. **Deliberately not fixed here:** `test_models_parity.py` is M3's file and
+  the fixture is M2's, so repairing it from this session would be a two-owner edit (rule 7).
+  It also will **not** clear itself when other work finishes, which is the one part of the
+  "still unfinished" framing that does not hold — filed in `test-suite.md` for its owner.
+- **A harness bug recurred, and that is the more useful finding.** The mutation harness's
+  first scoring of M3 was a **false kill**: renaming an imported constant breaks
+  *collection* (pytest exit 2, zero tests collected), and a `rc != 0` check would have
+  counted it. **Session 21's first harness reported 7/7 false kills for the same reason.**
+  Only the control run exposed it, both times. Convention 7's control run is not
+  ceremony — it is the only thing standing between this suite and a permanently green lie.
+
+
