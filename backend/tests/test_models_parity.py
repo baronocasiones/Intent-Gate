@@ -382,5 +382,13 @@ def test_demo_traceability_fixture_loads_into_model():
     matrix = TraceabilityMatrix(**data)
     assert matrix.run_id == "demo"
     assert [link.criterion_id for link in matrix.links] == ["AC-1", "AC-2"]
-    assert all(link.evidence_tier == "E0" for link in matrix.links)
-    assert all(link.locations == [] for link in matrix.links)
+    # Stale-guard repair (M15 session, rule 7): these two assertions pinned the
+    # pre-M2 stub fixture (E0 everywhere, no locations). M2 landed the realistic
+    # corpus — AC-1 CERTIFIED at E4, AC-2 REJECTED at E2, both located — and
+    # this guard was not flipped with it. It failed on main before any M15
+    # change; the fixture is the truth, the assertion is what was wrong.
+    assert [link.evidence_tier for link in matrix.links] == ["E4", "E2"]
+    assert [link.locations for link in matrix.links] == [
+        ["src/refund.py:64"],
+        ["src/refund.py:88"],
+    ]

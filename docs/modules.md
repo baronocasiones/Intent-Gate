@@ -51,7 +51,7 @@ break your module (from `docs/test-suite.md`'s coverage map — extend it as you
 | M10 | Orchestrator (pipeline + queue) | `backend/app/orchestrator/` | S | M9, M14 | `test_pipeline.py` |
 | M11 | LLM layer + config | `backend/app/llm/`, `config.py` | M | — | `test_llm.py`, `test_config.py` |
 | M12 | Attestor read-only policy | `backend/app/attestor/policy.py`, `backend/app/attestor/sandbox.py` | S | — | `test_policy.py` |
-| M13 | False-certified metric + mutation harness | `backend/app/metrics/` | M | M9, M14 | `test_metric.py` |
+| M13 | False-certified metric (harness withdrawn 2026-09-27) | `backend/app/metrics/` | M | M9, M14 | `test_metric.py` |
 | M14 | Persistence (db + artifacts) | `backend/app/db.py`, `store/` | S | M1 | `test_store_db.py` |
 | M15 | API surface | `backend/app/routers/`, `main.py` | M | M10, M13, M14 | `test_api.py` |
 | M16 | Dashboard | `frontend/` | M | M2, M15 | none (gap — M17 adds) |
@@ -854,27 +854,50 @@ because everything else waits on it, not because it is large.
 
 ### M13 — False-certified metric + mutation harness — **the publishable number**
 
+> **Superseded in part, 2026-09-27** — per the admin-ruled plan (`refactor-plan.md`) and
+> Session 24's decision (a): **the mutation harness is not part of the current
+> architecture.** Its branch (`bob/m13-mutation-harness`) was unpruned dead work, is now
+> **deleted from `origin`**, and was never on `main`. The two ACs that exist only to
+> *inject* mutations are **withdrawn, not failed** (struck below). **The metric itself is
+> not withdrawn** — four ACs are satisfied and ticked, and the reader that will eventually
+> feed it is live (M15, `api-surface`, `5f6f5c6`) — though it reports `measured: false`
+> until something writes `{operator, verdict}` artifacts, which nothing does today.
+
 **Purpose:** compute and defend `P(CERTIFIED | spec violation present)` by injecting
 known spec mutations and reporting per operator class. **Code:**
 `backend/app/metrics/false_certified.py` — `OPERATORS` (7, settled) and
 `false_certified_rate(results)`, which already returns
 `{false_certified_rate, measured, by_operator}` with `measured = total > 0` and a `None`
-rate when empty. **Today:** the math is done and tested; **nothing feeds it** (no
-mutation harness, no aggregation, no endpoint).
+rate when empty. **Today:** the math is done and tested. `GET /api/metrics` is **live**
+(M15, `api-surface`, `5f6f5c6`) — it aggregates `{operator, verdict}` artifacts out of
+`ARTIFACT_DIR` and reports the honest unmeasured envelope while none exist. What is still
+missing is the **producer**: run artifacts carry no `operator` key and are skipped, and
+the harness that would have written them is withdrawn, so the number stays
+`measured: false` until a data source is decided. **D15** owns the formal artifact shape.
 
 **Acceptance criteria**
-- [ ] A **mutation harness** that takes a real criterion, applies one operator, re-runs
-      the pipeline, and records the resulting verdict. This is what makes the metric
-      measured rather than asserted.
-- [ ] All 7 operators are exercised, reported per class. `by_operator` keys stay exactly
-      the `OPERATORS` tuple (a test pins them).
-- [ ] **The empty case stays honest:** `measured: false` with a `null` rate, never `0.0`
-      (rule 6, and 1.7). A pre-measurement dashboard must not imply a good number.
-- [ ] Output conforms to `exposure.schema.json`; add the missing validator pair (M1).
-- [ ] Corroborating ground truth (Stryker "Survived" mutants) is a **stretch**, not a
-      P0. Do not let it block the harness (**D5**).
-- [ ] Per-operator rates are reported, not just the pooled rate — the per-class spread is
-      the interesting result and the defensible one.
+- [ ] **WITHDRAWN 2026-09-27** (see banner) — ~~A **mutation harness** that takes a real
+      criterion, applies one operator, re-runs the pipeline, and records the resulting
+      verdict.~~ Out of the current architecture by user decision; the branch is deleted.
+      **Not a failure**, and not to be revived without a new decision.
+- [x] All 7 operators are reported per class and `by_operator` keys stay exactly the
+      `OPERATORS` tuple — `test_operators_are_exactly_the_seven_mutation_classes`. **The
+      "exercised" half is withdrawn** with the harness: no mutations are injected, so the
+      per-class numbers stay empty (`measured: false`) until a data source lands.
+- [x] **The empty case stays honest:** `measured: false` with a `null` rate, never `0.0`
+      (rule 6, and 1.7). A pre-measurement dashboard must not imply a good number —
+      `test_empty_input_is_unmeasured` + `test_empty_input_still_keys_all_seven_operators`,
+      and since M15 the endpoint is guarded by `test_api_metrics_unmeasured_by_default`.
+- [x] Output conforms to `exposure.schema.json`; the missing validator pair (M1) added —
+      `test_output_validates_against_exposure_contract`, and
+      `scripts/validate_contracts.py` reports **6/6** schemas covered.
+- [ ] **WITHDRAWN 2026-09-27** (see banner) — corroborating ground truth (Stryker
+      "Survived" mutants) was a **stretch**, not a P0, and was never to block the harness
+      (**D5**). With no harness it is **moot**, not pending.
+- [x] Per-operator rates are reported, not just the pooled rate — `by_operator` in the
+      output, pinned independent of the pooled math by
+      `test_per_operator_breakdown_is_independent`. The per-class spread is the
+      interesting result and the defensible one; values are empty until data exists.
 
 **Size:** M. **Needs:** M9, M14. **Risk:** medium — it depends on the pipeline running
 end-to-end, so it is effectively Wave 3. **Note:** Session 11 recommended adjudicate +
@@ -908,33 +931,68 @@ reports whether the suite catches them. Useful for M17; it is **not** repo code.
 ### M15 — API surface
 
 **Purpose:** the four endpoints plus static hosting — the whole external contract.
-**Code:** `backend/app/routers/webhooks.py` (live), `runs.py` and `metrics.py` (stubs),
-`backend/app/main.py`. **Today:** `POST /webhooks/github` accepts any JSON (real
-delivery or hand-injected demo body on the same path) and mints an id; `GET /api/runs`,
-`/api/runs/{id}`, `/api/metrics` return hard-coded stubs. **Known defect:** `main.py`
-resolves `frontend/dist` by climbing **three** levels from `backend/app/`, landing outside
-the project, so the static mount silently never activates even when the dashboard is
-built.
+**Code:** `backend/app/routers/webhooks.py` (live), `runs.py` and `metrics.py` (**live as
+of the core slice, 2026-09-27**), `backend/app/main.py`. **Today:** `POST /webhooks/github`
+accepts any JSON (real delivery or hand-injected demo body on the same path), mints an id,
+persists a `queued` row and submits to the queue; `GET /api/runs` lists rows newest-first,
+`GET /api/runs/{id}` returns the envelope + artifact pointers (404 unknown), `GET /api/metrics`
+aggregates M13's function over stored mutation results (none stored yet → honest unmeasured).
+The `_dist` defect is **fixed** (two levels, behind `_resolve_dist()` / `mount_dashboard()`,
+proven by tests), and the lifespan starts `jobs.worker()`.
 
 **Acceptance criteria**
-- [ ] `GET /api/runs` lists real rows (newest first) from M14; `GET /api/runs/{id}`
+- [x] `GET /api/runs` lists real rows (newest first) from M14; `GET /api/runs/{id}`
       returns the run envelope plus artifact pointers, and a `404` for an unknown id
       (**today it echoes any id with `status: "pending"`** — that is a stub, not a lookup).
-- [ ] `GET /api/metrics` aggregates M13's function over stored mutation results and keeps
-      the exposure contract's three keys exactly (a test pins the key set).
-- [ ] **Fix the `_dist` path** (two levels, not three) and prove it: a test that the
-      mount appears when a `dist` directory exists is the honest fix, not a comment.
+      — *core slice 2026-09-27: row + artifact pointer + 404 (500 if the artifact file a
+      row points at is missing — a defect must not read as empty); `created_at` pinned as
+      an ISO-8601 string, which doubles as M14's owed type test.*
+- [x] `GET /api/metrics` aggregates M13's function over stored mutation results and keeps
+      the exposure contract's three keys exactly (a test pins the key set). — *core slice:
+      reads `{operator, verdict}` artifacts from `ARTIFACT_DIR` (the M13 wiring point;
+      formal envelope is D15's to define); with no results it returns `{null, false, 7×zeroed}`
+      — never `0.0`. The old stub asserted `by_operator == {}`; the guard now pins the
+      seven zeroed buckets instead.*
+- [x] **Fix the `_dist` path** (two levels, not three) and prove it: a test that the
+      mount appears when a `dist` directory exists is the honest fix, not a comment. —
+      *core slice: `_resolve_dist()` is asserted equal to `<repo>/frontend/dist`, and
+      `mount_dashboard()` is proven to mount when the directory exists (without shadowing
+      earlier routes) and not to when it does not.*
 - [ ] Webhook: verify the GitHub signature when a secret is configured (**D7**), keep the
       injected-payload path working with no secret (demo survival), and submit the run
-      to the queue (needs M10 + the `main.py` lifespan change).
+      to the queue (needs M10 + the `main.py` lifespan change). — *queue submit + lifespan
+      DONE in the core slice; **HMAC/D7 not started** (outside the confirmed scope); the
+      no-secret injection path keeps working and is test-pinned.*
 - [ ] GitHub write-back (PR comment + check run) is a **stretch** (**D13**), not a P0 —
       the non-zero exit is the merge-blocking claim and it already works.
-- [ ] Flip the three stub-response tests in `test_api.py` in the same change (rule 7);
+- [x] Flip the three stub-response tests in `test_api.py` in the same change (rule 7);
       the route-table test must keep passing (no routes added or removed without
-      updating it).
+      updating it). — *core slice: three stubs replaced (list lookup / 404+envelope /
+      metrics aggregation), five more tests added; route-table test untouched and green.
+      `test_pipeline.py`'s unwired-queue characterization flipped in the same change.*
 
 **Size:** M. **Needs:** M10, M13, M14. **Note:** M15 owns `main.py`, so M10 and any
 lifespan work must go through here.
+
+**Core-slice deviation record (2026-09-27, Session 22):** with the user's approval, the
+M10/M14 glue was added as a **minimal shim** rather than waiting for those modules: the
+persistence helpers live in `orchestrator/pipeline.py` (shim-touched) and
+`backend/tests/conftest.py` (new file) isolates every test's DB + artifacts to `tmp_path`.
+`db.py`, `store/artifacts.py`, `config.py` and the contracts were not edited. Final run
+status follows the D9 recommended default with one recorded deviation: a `PENDING` verdict
+maps to `pending` (D9's set has no "not yet decided" value; `failed` would misreport a
+fail-closed default as a crash).
+
+**M14-alignment rewire (2026-09-27, later the same day, `ac9b373`):** the core-slice shim above
+describes the pre-rewire state and is **superseded**. `orchestrator/pipeline.py` no longer owns a
+connection, DDL, a timestamp source or any SQL: writes go through `db.save_run` / `db.set_status`
+(rowcount-checked — 0 on the final flip is a blocking failure, rule 6), reads through `db.get_run` /
+`db.list_runs`, with the `id` → `run_id` projection kept at the API edge and `list_runs`' 50-row
+cap inherited. `routers/runs.py` reads artifacts through `store/records.read_artifact` (one
+canonical path resolver, writer and reader together); `routers/metrics.py` keeps its own
+aggregation reader. `backend/tests/conftest.py` redirects storage at `app.db.DATABASE_URL` — db.py's
+documented patch point, the consumer module, never `os.environ` — rather than the deleted shim
+attribute. `db.py`, `store/`, `config.py` and the contracts were still not edited (§0.4).
 
 ---
 
@@ -976,8 +1034,9 @@ sat outside M2's write scope:
    copies against each other; it cannot guard a third copy written in JS.
 2. Feed `fixtures/demo_exposure.json` to `ExposureCard` so the mutation number is displayed.
    `App.jsx` seeds `metrics` as `{false_certified_rate: null, measured: false}` and only
-   `fetchMetrics()` can change it, and `GET /api/metrics` still returns a hard-coded stub
-   (`architecture.md` §11.2) — so nothing on screen shows 0.25 today.
+   `fetchMetrics()` can change it, and `GET /api/metrics` (live since M15's core slice)
+   returns the honest *unmeasured* envelope while no mutation results are stored —
+   so nothing on screen shows 0.25 today.
 3. **Defect, verified, not fixed — M16's files.** `App.jsx:23` passes `run.status` into
    `<VerdictBadge>`, but `VerdictBadge.jsx:2` compares it against the uppercase verdict enum
    (`'CERTIFIED'` / `'REJECTED'`). A D9-conformant lowercase status matches neither branch
@@ -1654,3 +1713,32 @@ kept out of this file, per Session 19's precedent.
   of what the weaker control misses; the `emit.py` semantic home for the embedding;
   Figure 6's generator (§11.11, unowned, do-not-show); `llm_egress` still unexercised
   (M11). D1–D13 and D15 unchanged by this session.
+### 2026-09-27 — M15: API surface core slice (branch `api-surface`)
+
+> **Heading relabelled per `AGENTS.md` Convention 18 (date + module)** — the draft called
+> this "Session 22", which collides with the other "Session 22" entries carried from
+> parallel sessions (see the same note in `architecture.md`'s log).
+
+- `/start` instruction: *"create the api surface module, create a new branch"* → target **M15**,
+  branch **`api-surface`** (confirmed spelling), scope confirmed before execution as the
+  **core slice** (`_dist` fix + real DB listing + queue submit) with **minimal M10/M14 shims**.
+- **Landed:** §M15 above — four checkboxes marked (`runs` list/detail+404, `metrics`
+  aggregation, `_dist` fix, guard flips). Deferred by scope choice: **HMAC/D7** and
+  **write-back/D13** (still open, D13 remains a stretch).
+- **Shim record:** persistence glue in `orchestrator/pipeline.py`, queue envelope +
+  lifespan worker, `tests/conftest.py` (new) isolating DB/artifacts to `tmp_path`.
+  `db.py`, `store/artifacts.py`, `config.py`, contracts: untouched. D9 taken as the
+  recommended default with the recorded `pending` deviation (see §M15).
+- **Baseline finding carried forward:** `test_policy.py` fails **12/12 on this Windows
+  machine on `main` before any M15 change** — M12's sandbox probes POSIX read-only
+  directories and `chmod` is unenforced on directories by Windows. Platform gap, owner
+  M12/M17; not patched (rule 8). Also fixed one pre-existing stale guard in
+  `test_models_parity.py` (M2 upgraded the fixture; the E0/empty-locations assertions
+  were never flipped) — the fixture is the truth, the assertion was wrong.
+- **Verification:** 179 passed / 12 failed (only the M12-Windows set above) on a fresh
+  fully-pinned venv; contract validator 6/6 exit 0; live uvicorn smoke of the whole
+  webhook → queue → worker → artifact → runs → metrics path.
+- Decisions still open: D1–D13, D15 unchanged by this session.
+
+- **M15/M10 delivery state (2026-09-27, end of session):** both PRs are open and review-ready — **#53** (`m17-policy-windows`, the Windows test-only fix) and **#54** (`api-surface`: the core slice, the loop wiring, the M14-alignment rewire recorded above, and the §11.15 close). #54's Linux CI is green on both legs; #53's red is `main`'s parity red, documented on the PR, and #54 already contains #53's history so merge order does not matter. `api-surface` has absorbed `main` (`aca1631`, Static Frontend #52) in `640f8a9` and stands 0 behind / 9 ahead. Integration merges remain baron's (§0.4). **Unchanged by all of this:** the M14 helper contracts, the D9 status set (with its one recorded `pending` deviation), the five documented routes, and the open decision set — D1–D13, D15, with HMAC (D7) and GitHub write-back (D13) deferred by the confirmed scope and `npm install` still unrun.
+- **Correction to the record above (appended, not rewritten — its author owns the text):** **#53 was merged to `main` as `e007a03`**, so it is no longer open and the "#53 stays red" condition above is resolved by that merge, not by #54. `api-surface` absorbed the new `main` in `9dbefc5`: both conflicts were in the session logs, **both had an empty `theirs` side** (this branch already carries the M17 records), and the M17 record is present **exactly once** per file — verified, not assumed. `backend/tests/test_policy.py` is byte-identical to `main`'s. Windows after the merge: **213 passed, 21 skipped (each with a stated reason), 0 failed**; validator **6/6**. **PR #54 is `MERGEABLE`**, 0 behind, CI re-running on py3.11/py3.12.

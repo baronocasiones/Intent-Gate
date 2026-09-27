@@ -1,14 +1,14 @@
-"""Pipeline + job queue — docs/architecture.md §1, §4 (as coded) and §11.1.
+"""Pipeline + job queue ΓÇö docs/architecture.md ┬º1, ┬º4 (as coded) and ┬º11.1.
 
-The jobs queue is *intentionally unwired* (§11.1): submit() enqueues but no
-worker is ever started by the app. These are characterization tests — they
-pin today's behavior and must be updated deliberately when the queue lands.
-
-The bottom section covers the attestor gate `run_pipeline` now applies before
-any stage executes. Those are what make the gate a control rather than a claim:
-each one makes a run impossible and asserts that no stage ran.
+The jobs queue was *intentionally unwired* (┬º11.1) until the M15 core slice:
+`enqueue_run` now persists a `queued` row and submits, and the app lifespan
+starts `worker()`. The old "worker is never started by the app" characterization
+flipped in the same change (modules.md rule 7) ΓÇö it now pins the wiring instead
+of its absence.
 """
+import json
 import re
+from pathlib import Path
 
 import pytest
 
@@ -19,7 +19,7 @@ def test_run_pipeline_chains_all_six_stages_to_emit():
     out = run_pipeline({"pr": 142})
     assert out["stage"] == "emit"
     assert out["ok"] is True
-    # Gate default: non-zero exit blocks merge (§4.4)
+    # Gate default: non-zero exit blocks merge (┬º4.4)
     assert out["exit_code"] == 1
     # record is the adjudicate stage's output, passed through emit
     assert out["record"]["stage"] == "adjudicate"
@@ -48,10 +48,14 @@ def test_enqueue_run_ids_unique():
 
 
 def test_jobs_submit_enqueues_and_drains_cleanly():
-    """§11.1 characterization: submit() puts on the queue; nothing consumes it.
+    """┬º11.1 characterization ΓÇö FLIPPED (M15 core slice, rule 7).
 
-    The test drains the queue itself so the module-level queue stays clean
-    for other tests — the app never starts worker().
+    The old claim ("submit() puts on the queue; nothing consumes it ΓÇª the app
+    never starts worker()") is no longer true: main.py's lifespan starts
+    worker(), which consumption is pinned by
+    `test_worker_is_coroutinefunction_and_lifespan_starts_it`. What stands:
+    submit() puts exactly one envelope on the queue, and this test still
+    drains it itself so the module-level queue stays clean for other tests.
     """
     from app.orchestrator import jobs
 
@@ -64,23 +68,82 @@ def test_jobs_submit_enqueues_and_drains_cleanly():
     assert jobs._queue.qsize() == 0
 
 
-def test_worker_is_async_but_never_started_by_app():
-    """§11.1: worker() exists and is a coroutine function, but main.py never
-    schedules it. Asserting absence here means: when wiring lands, this test
-    flips and must be rewritten on purpose."""
+def test_worker_is_coroutinefunction_and_lifespan_starts_it():
+    """FLIPPED (M15 core slice): worker() is started by main.py's lifespan and
+    cancelled again at shutdown. The old assertion (`"jobs" not in vars(main)`)
+    pinned the unwired queue and was rewritten deliberately (rule 7)."""
     import inspect
+
+    from fastapi.testclient import TestClient
 
     from app.orchestrator import jobs
 
-    # `inspect`, not `asyncio` — the latter is deprecated as of Python 3.14 and
+    # `inspect`, not `asyncio` ΓÇö the latter is deprecated as of Python 3.14 and
     # slated for removal in 3.16. Identical result here: `worker` is a plain
     # `async def` with no `markcoroutinefunction` decorator, which is the only
     # case where the two disagree.
     assert inspect.iscoroutinefunction(jobs.worker)
-    # main.py imports only the routers — no jobs import at app entry:
     from app import main
 
-    assert "jobs" not in vars(main)
+    assert "jobs" in vars(main)  # lifespan wiring lives in main.py (M15 owns it)
+
+    with TestClient(main.app):
+        assert main._worker_task is not None
+        assert not main._worker_task.done()
+    # shutdown cancels the task and clears the handle
+    assert main._worker_task is None
+
+
+def test_enqueue_run_persists_queued_row_and_submits():
+    """M15 core slice: the id is no longer minted into the void ΓÇö the row is
+    listable immediately and the queue gains exactly one item."""
+    from app.orchestrator import jobs, pipeline
+
+    before = jobs._queue.qsize()
+    run_id = enqueue_run({"pr": 1})
+
+    assert jobs._queue.qsize() == before + 1
+    row = pipeline.fetch_run_row(run_id)
+    assert row is not None
+    assert row["status"] == "queued"
+    assert row["artifact_path"] is None
+
+
+def test_run_pipeline_persists_row_and_artifact():
+    """The synchronous path persists exactly like the queued one: row flipped
+    to the lowercased verdict (D9 default), artifact written with a sha256."""
+    from app.orchestrator import pipeline
+
+    run_id = enqueue_run({"pr": 7})
+    run_pipeline({"pr": 7}, run_id=run_id)
+
+    row = pipeline.fetch_run_row(run_id)
+    assert row["status"] == "pending"  # stub verdict PENDING -> D9 lowercase
+    assert row["artifact_path"] is not None
+
+    data = json.loads(Path(row["artifact_path"]).read_text(encoding="utf-8"))
+    assert data["stage"] == "emit"
+    assert data["exit_code"] == 1  # fail-closed default (┬º1.5)
+    assert len(data["sha256"]) == 64
+
+
+def test_run_pipeline_marks_run_failed_when_a_stage_raises(monkeypatch):
+    """Rule 6: a crash must not leave a run looking alive or certified. The
+    exception still propagates ΓÇö it is never swallowed to get to green."""
+    from app.orchestrator import pipeline
+
+    class Boom:
+        @staticmethod
+        def run(payload):
+            raise RuntimeError("stage exploded")
+
+    monkeypatch.setattr(pipeline, "ingest", Boom)
+
+    run_id = enqueue_run({})
+    with pytest.raises(RuntimeError, match="stage exploded"):
+        run_pipeline({}, run_id=run_id)
+
+    assert pipeline.fetch_run_row(run_id)["status"] == "failed"
 
 
 # --- the attestor gate: a run that cannot prove read-only never starts ---
@@ -105,7 +168,7 @@ def test_a_gated_run_carries_the_attestor_fragment_it_actually_proved():
 
     The keys are asserted exactly. A fragment that quietly lost
     `workspace_mechanism` would still read as compliant while no longer saying
-    which control held — shape stability (rule 3) is what makes an auditor's
+    which control held ΓÇö shape stability (rule 3) is what makes an auditor's
     reading of it stable across sessions."""
     out = run_pipeline({"pr": 142})
     fragment = out["attestor_policy"]
@@ -146,7 +209,7 @@ def test_the_fragment_names_the_workspace_that_was_proved(monkeypatch, tmp_path)
 def test_a_run_without_a_capability_declaration_is_refused_before_any_stage(monkeypatch):
     """Fail closed on the declaration. A worker that was never told what it may
     do is a worker whose capabilities are unknown, and a set comparison against
-    our own constant cannot establish what it was told — the declaration is
+    our own constant cannot establish what it was told ΓÇö the declaration is
     external precisely so that it can be absent and visible.
 
     The spy is the assertion that matters: refusal happened *before* `ingest`,
@@ -185,7 +248,7 @@ def test_a_run_against_a_workspace_that_still_accepts_writes_is_refused(
     """The control's own fail-closed path, reached through the pipeline.
 
     The workspace is a fresh writable directory, not the provisioned one the
-    suite fixture hands out — provisioning is probe-first, so pointing at an
+    suite fixture hands out ΓÇö provisioning is probe-first, so pointing at an
     already-refusing workspace would return before reaching the branch under
     test. Here the denial is stubbed to a no-op, standing in for a platform
     that cannot make a directory read-only at all. The gate must refuse rather
@@ -225,22 +288,34 @@ async def test_a_refused_run_does_not_kill_the_queue_worker(monkeypatch):
 
     `worker()` calls `run_pipeline`, which now raises for a run it cannot prove
     read-only. Without a boundary here that exception would end the task, and
-    the queue would keep accepting submissions that nothing ever consumes — a
-    refused run would be indistinguishable from a run that is merely slow. The
-    test makes the first run fail and asserts the worker is still consuming."""
+    the queue would keep accepting submissions that nothing ever consumes ΓÇö a
+    refused run     would be indistinguishable from a run that is merely slow. The test makes
+    the first run fail and asserts the worker is still consuming.
+
+    The queue is replaced rather than reused. `jobs._queue` is module-level, and
+    the lifespan test above binds it to the event loop `TestClient` runs in, so
+    submitting to it from this test's loop raises "bound to a different event
+    loop" — a failure that has nothing to do with the boundary under test. A
+    fresh queue is the honest isolation, and monkeypatch puts the real one back.
+    """
     import asyncio
 
     from app.orchestrator import jobs
 
+    monkeypatch.setattr(jobs, "_queue", asyncio.Queue())
+
     refusals = {"read, subagent, skill, workflow"}
     seen: list = []
 
-    def _fake_run_pipeline(payload):
+    def _fake_run_pipeline(payload, run_id=None):
+        # `run_id` is an M15 parameter: the queue envelope supplies it, and a fake
+        # that does not accept it would fail every submission for the wrong reason
+        # and leave this test proving nothing about the boundary.
         declared = refusals.pop() if refusals else None
         if declared is None:
             seen.append(payload)
             return {"stage": "emit"}
-        raise PermissionError(f"attestor policy incomplete — missing: {declared!r}")
+        raise PermissionError(f"attestor policy incomplete: missing {declared!r}")
 
     monkeypatch.setenv("ATTESTOR_CAPS", DECLARED_ALL)
     monkeypatch.setattr("app.orchestrator.pipeline.run_pipeline", _fake_run_pipeline)
