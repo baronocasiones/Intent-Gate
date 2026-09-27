@@ -1,12 +1,31 @@
 """FastAPI entry — serves API + React dashboard (fixture fallback)."""
+import asyncio
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
 import os
 
+from .orchestrator import jobs
 from .routers import webhooks, runs, metrics
 
-app = FastAPI(title="Intent Attestation Gate", version="0.1.0")
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    """R1: run the attestation worker off the request path. Shutdown is
+    cooperative (stop event + sentinel — never cancellation), so an
+    in-flight run finishes its write before the task ends."""
+    stop = asyncio.Event()
+    app.state.worker_task = asyncio.create_task(jobs.worker(stop=stop))
+    try:
+        yield
+    finally:
+        stop.set()
+        await jobs._queue.put(None)
+        await app.state.worker_task
+
+
+app = FastAPI(title="Intent Attestation Gate", version="0.1.0", lifespan=_lifespan)
 
 app.include_router(webhooks.router)
 app.include_router(runs.router)
