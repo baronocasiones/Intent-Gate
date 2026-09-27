@@ -17,7 +17,7 @@ every "refused" case uses a real directory with the write bit removed and the
 write genuinely attempted. There is no mocking of `os.access` anywhere in this
 file, on purpose. The whole value of the probe is that the kernel refused.
 
-Two environment hazards, handled by fixtures rather than by luck:
+Three environment hazards, handled by fixtures rather than by luck:
   * A 0555 directory defeats pytest's tmp_path cleanup, which uses
     shutil.rmtree and cannot unlink inside a directory it may not write to. Any
     test that chmods down restores the mode, or the entire run errors during
@@ -25,10 +25,19 @@ Two environment hazards, handled by fixtures rather than by luck:
   * Root ignores the write bit, so under root a 0555 directory stays writable and
     every read-only expectation would fail for a reason that looks like a product
     bug. Those tests skip, with the reason stated, instead of failing confusingly.
+  * Windows does not enforce the read-only attribute on directories, so a 0555
+    directory there also still accepts a file. ro_workspace attempts the write
+    before yielding and skips — with the reason stated — when the platform takes
+    it, because a directory the kernel would write to is not read-only and the
+    failure would read as a product bug. Where the kernel refuses, it still
+    refuses for real: the write is genuinely attempted every time, and Linux CI
+    runs every refusal case.
 
 Exactly one test substitutes the OS call, and its name says so. It covers the
 errno-to-witness translation for EROFS, which cannot be provoked on an
-unprivileged box; every refused case attempts the write for real.
+unprivileged box; every refused case attempts the write for real. The ELOOP case
+needs a symlink, which Windows grants only with the symlink privilege; that test
+skips when the privilege is missing, again with the reason stated.
 
 `llm_egress` is the fifth grant. Option (b) puts the watsonx.ai call in each M7b
 worker, so a worker needs outbound network. The tests below declare the complete
@@ -101,7 +110,48 @@ def rw_workspace(tmp_path):
 
 @pytest.fixture
 def ro_workspace(tmp_path):
-    """A genuinely read-only directory, with the mode restored on the way out."""
+    """A directory the kernel has genuinely refused to write to, with the mode
+    restored on the way out.
+
+    The chmod alone is a promise, not a proof: root ignores the write bit and
+    Windows does not enforce it on directories, so the fixture attempts the
+    probe's own write first. A refusal means the promise holds and the tests
+    below get the real observation they exist for. An accepted write means this
+    platform cannot express read-only at all, so they skip with that stated
+    rather than fail looking like a product bug."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    original = os.stat(workspace).st_mode
+    os.chmod(workspace, 0o555)
+    try:
+        probe = workspace / PROBE_NAME
+        refused = False
+        try:
+            probe.touch()
+        except OSError as exc:
+            if exc.errno in REFUSAL_ERRNOS:
+                refused = True
+            else:
+                raise
+        if not refused:
+            probe.unlink()
+            pytest.skip(
+                "platform cannot make a directory read-only: a 0555 directory "
+                "here still accepted a write, so there is no kernel refusal to "
+                "observe (root and Windows both behave this way); Linux CI runs "
+                "these tests"
+            )
+        yield workspace
+    finally:
+        os.chmod(workspace, original & 0o7777)
+
+
+@pytest.fixture
+def ro_mode_workspace(tmp_path):
+    """A directory with the read-only mode applied but not verified, for the
+    tests whose subject is consistency rather than refusal: two probes agreeing,
+    no residue left behind, and a proof rejected regardless of what it says all
+    hold on any platform, and none of them asserts that the kernel said no."""
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     original = os.stat(workspace).st_mode
@@ -353,11 +403,11 @@ def test_probe_reports_refused_on_a_read_only_directory(ro_workspace):
 
 
 @SKIP_AS_ROOT
-def test_two_probes_of_the_same_read_only_workspace_agree(ro_workspace):
+def test_two_probes_of_the_same_read_only_workspace_agree(ro_mode_workspace):
     """Evidence is worth nothing if it flickers. Two probes of one unchanged
     workspace must produce the same witness, so a record is reproducible."""
-    assert probe_workspace_readonly(ro_workspace).to_dict() == (
-        probe_workspace_readonly(ro_workspace).to_dict()
+    assert probe_workspace_readonly(ro_mode_workspace).to_dict() == (
+        probe_workspace_readonly(ro_mode_workspace).to_dict()
     )
 
 
@@ -382,11 +432,11 @@ def test_probe_leaves_no_residue_when_the_write_succeeds(rw_workspace):
 
 
 @SKIP_AS_ROOT
-def test_probe_leaves_no_residue_after_a_refusal(ro_workspace):
+def test_probe_leaves_no_residue_after_a_refusal(ro_mode_workspace):
     """A refusal writes nothing by definition, so the workspace must come out
     exactly as it went in. Worth pinning because the probe is a write attempt."""
-    probe_workspace_readonly(ro_workspace)
-    assert list(ro_workspace.iterdir()) == []
+    probe_workspace_readonly(ro_mode_workspace)
+    assert list(ro_mode_workspace.iterdir()) == []
 
 
 def test_probe_on_a_missing_path_is_a_visible_failure(tmp_path):
@@ -473,9 +523,19 @@ def test_probe_propagates_an_unrecognised_errno_instead_of_inventing_a_witness(r
     fails the interesting way.
 
     It also covers the cleanup on the raising path: nothing the failed attempt
-    left behind survives, so a malfunction cannot litter the workspace either."""
+    left behind survives, so a malfunction cannot litter the workspace either.
+
+    Windows grants the right to create symlinks only to privileged or
+    developer-mode sessions, and ELOOP has no other honest spelling here, so a
+    session without the privilege skips with the reason stated instead."""
     probe = rw_workspace / PROBE_NAME
-    os.symlink(probe, probe)  # self-referential, so open() gives ELOOP
+    try:
+        os.symlink(probe, probe)  # self-referential, so open() gives ELOOP
+    except OSError as exc:
+        pytest.skip(
+            f"symlink privilege unavailable ({exc.strerror or exc}); ELOOP cannot "
+            "be provoked on this session; Linux CI runs this test"
+        )
     with pytest.raises(OSError) as caught:
         probe_workspace_readonly(rw_workspace)
     assert caught.value.errno == errno.ELOOP
@@ -485,7 +545,6 @@ def test_probe_propagates_an_unrecognised_errno_instead_of_inventing_a_witness(r
 # --- the gate in front of the gate ---
 
 
-@SKIP_AS_ROOT
 @SKIP_AS_ROOT
 def test_enforce_workspace_readonly_returns_the_proof_on_a_read_only_workspace(ro_workspace):
     """It hands back the proof rather than just a bool, so the caller has
@@ -626,12 +685,12 @@ def test_ungated_record_reports_the_workspace_as_not_readonly():
     assert "not probed" in ungated.workspace_witness
 
 
-def test_policy_record_rejects_a_proof_on_an_ungated_record(ro_workspace):
+def test_policy_record_rejects_a_proof_on_an_ungated_record(ro_mode_workspace):
     """A run that never gated reporting workspace_readonly=True would be
     incoherent: the only path to that value is a gated run. Raising beats
     dropping the proof on the floor, which is the habit this module is trying to
     break everywhere else."""
-    proof = probe_workspace_readonly(ro_workspace)
+    proof = probe_workspace_readonly(ro_mode_workspace)
     with pytest.raises(PermissionError, match="never gated"):
         policy_record(GRANTS, enforcement_applied=False, proof=proof)
 
