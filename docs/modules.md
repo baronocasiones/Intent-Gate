@@ -378,21 +378,71 @@ Neither is ratified, so no test asserts either rule in general — only what thi
 ### M3 — Pydantic mirrors
 
 **Purpose:** typed in-process models mirroring `contracts/`, so gates get validation
-without re-parsing JSON Schema. **Code:** `backend/app/models/schemas.py`. **Today:**
-`Verdict` and `EvidenceTier` literals plus `CriterionVerdict` and `RunRecord`.
-**Target interface:** add a `Criterion` model (`criterion_id` / `text` / `testable`)
-mirroring `criterion.schema.json`, and an `Exposure` model mirroring `exposure`. Keep
-existing model names and defaults — `test_schemas_contracts.py` pins them.
+without re-parsing JSON Schema. **Code:** `backend/app/models/schemas.py`.
+**Implemented 2026-09-27 (Session 18):** `Verdict` / `EvidenceTier` literals plus
+**six** models — `Criterion`, `CriterionVerdict`, `RunRecord`, `TraceabilityLink`,
+`TraceabilityMatrix`, `Exposure` — all inheriting a strict `ContractModel` base.
+Parity with all five contracts is asserted in **`test_models_parity.py`**, not
+`test_schemas_contracts.py` (see the deviation note below).
+**Target interface:** keep existing model names and defaults —
+`test_schemas_contracts.py` pins them.
 
 **Acceptance criteria**
-- [ ] A model exists for every schema in `contracts/` (parity asserted in
-      `test_schemas_contracts.py`).
-- [ ] `CriterionVerdict.locations` and `.rationale` keep their defaults (`[]`, `""`) —
+- [x] A model exists for every schema in `contracts/` (parity asserted).
+      **Deviation, deliberate:** the assertion landed in a new
+      `backend/tests/test_models_parity.py` rather than in
+      `test_schemas_contracts.py`. `backend/tests/` is M17's path (§0.2) and that
+      file is not in the §0.4 contended list, so editing it would have created the
+      two-owner collision §0.4 exists to prevent. The new file is
+      M3-exclusive and deliberately does **not** duplicate the enum, fixture-load
+      or round-trip tests already in `test_schemas_contracts.py`.
+- [x] `CriterionVerdict.locations` and `.rationale` keep their defaults (`[]`, `""`) —
       pydantic may default where the schema enforces (`docs/test-suite.md` Convention 5).
-- [ ] `Verdict` / `EvidenceTier` literals stay in sync with the schema enums. If M1
-      changes an enum, M3 changes in the same commit.
+- [x] `Verdict` / `EvidenceTier` literals stay in sync with the schema enums. If M1
+      changes an enum, M3 changes in the same commit. The two new enums-bearing
+      mirrors reuse the existing literals rather than redeclaring them.
 
-**Size:** S. **Note:** M3 owns this file exclusively; M4–M9 consume, never edit.
+**Two deliberate asymmetries** (both pinned by tests, both non-obvious):
+- **`Criterion` has no defaults.** `text=""` would erase the criterion and
+  `testable=False` would silently drop it — and an untestable criterion is rejected
+  outright, never verified (§1.3). Its three fields are the criterion's identity.
+  `CriterionVerdict`'s two defaulted fields are additive, which is why the
+  difference is intentional rather than inconsistent.
+- **`TraceabilityLink` is M3's one invented name.** The traceability contract
+  declares the link object *inline* under `properties.links.items`, so it has no
+  `title` to join the parity test on. Its **shape is still contract-derived and is
+  checked against that inline object**; only the name is M3's, because
+  `contracts/` is M1's alone. `INLINE_MIRRORS` in the test makes the exception
+  **self-invalidating**: if M1 ever promotes it to `traceability-link.schema.json`
+  with a `title`, the test fails until the entry is deleted. **Request for M1:**
+  promote it, so parity is a clean bijection.
+
+**Strictness — a decision, not a default.** All six models inherit
+`ContractModel` with `extra="forbid"`, making these models the **strict** in-process
+trust layer while `contracts/` stays the **permissive** interchange layer (none of
+the five sets `additionalProperties: false`). This matches the gate's fail-closed
+posture (rule 6: uncertainty resolves to *not certified*). It is pinned by
+`test_every_model_forbids_unknown_keys` so it cannot silently drift to `ignore`.
+**The stage chain is unaffected** — `pipeline.py` passes plain dicts and rule 3
+lets gates add keys; these models are for *records*, never for the pass-through.
+
+**Two obligations this strictness creates — both M9/M14's, neither fixable here:**
+1. `store.write_artifact` writes `{"sha256": ..., **payload}` (envelope, pinned by
+   `test_store_db.py`). Reading an artifact back into `RunRecord` must **project
+   the owned keys first**.
+2. Stage 6's record is a **superset** of `run.schema.json` — it also carries the
+   traceability matrix, debt ledger, exposure and `signed` (§1.7). M9 **cannot**
+   validate its own output into `RunRecord` unprojected.
+
+Both are recorded here rather than papered over, because a model that raises on the
+real path is a landmine M9 should meet deliberately. Note the alternative
+(`extra="ignore"`) would have silently dropped `sha256` instead — a quieter
+failure, and a byte-for-byte round-trip through a model would stop reproducing the
+artifact.
+
+**Size:** S — done. **Note:** M3 owns `backend/app/models/schemas.py` exclusively;
+M4–M9 consume, never edit. `models/__init__.py` was deliberately left alone (no
+re-exports; the brief names one file and callers use the full path).
 
 ---
 
@@ -992,6 +1042,93 @@ record that you did.
   code, contract, fixture, dependency, or endpoint changed. `AGENTS.md` was updated locally but
   is gitignored and **not** in the commit.
 
+### 2026-09-27 — Session 17: prioritization briefing (`/start` only, no code change)
+- Instruction: *"from our software architecture, what modules are needed to be prioritized."*
+  `/start` protocol only. Target module, session state, completed/remaining work and
+  conventions were displayed, and the user chose no follow-on before `/end`. **No decision
+  taken, no file written by this session, no code changed.**
+- **The prioritization was read from §0.5 rather than re-derived.** §0.5 already fixes the
+  critical path (`M1→M2→M4→M5→M6→M7→M8→M9→M10→M15→demo`) and the five waves. A second
+  ordering would compete with the one this file owns, which is precisely the drift §0.5
+  exists to prevent. The standing answer is unchanged: **Wave 0 = M1 + M11 + M12, start
+  now**; everything off the critical path floats.
+- **Rule 4 in §0.3 is the line that needs fixing, not `AGENTS.md` Convention 4.** Session 16
+  recorded that AGENTS.md Convention 4 "assumes a switch that does not exist"; checked
+  against the file, that is false — Convention 4 is about the *frontend* fixture fallback,
+  which works, and makes no claim about the backend LLM switch. Rule 4 is the one that says
+  "`MOCK_LLM=true` **and** the frontend fixture fallback must keep working", so it is the
+  one carrying the false half. The `MOCK_LLM` half is a **requirement, not a description** —
+  M11 still has to build the switch — so rule 4 stands as a target and should be marked that
+  way rather than deleted. The underlying gap is real: `architecture.md` §11.9, owner M11.
+- **API endpoints:** none. **Dependencies:** none. **Contracts/fixtures/code:** unchanged.
+- **Open at archive:** the user was offered (a) ratify D1–D13, (b) assign the 18 modules to
+  the 5 people, (c) start Wave 0 (M1, M11, M12), (d) something else — and took none. D1 still
+  blocks M7/M8/M9/M16, and M11 remains the schedule risk. 0 of 18 modules implemented.
+
+### 2026-09-27 — Session 18: M3 pydantic mirrors implemented (first module shipped)
+- Instruction: *"develop the pydantic mirrors (M3)"*, via the `/start` protocol. **This is
+  the first of the 18 modules actually implemented** — the standing headline moves from
+  0 of 18 to 1 of 18.
+- **Shipped:** `backend/app/models/schemas.py` went from 2 models to **6** — added
+  `Criterion`, `TraceabilityLink`, `TraceabilityMatrix`, `Exposure` behind a new
+  `ContractModel` base with `extra="forbid"`. Parity with all five contracts is now
+  **5/5** and asserted mechanically. New guard: `backend/tests/test_models_parity.py`.
+  **100 tests green** (79 baseline + 21 new) on **Python 3.11.9 and 3.12.14**; validator
+  OK ×2 on both legs.
+- **A false claim in the file's own docstring is now fixed.** Line 1 read *"per-criterion
+  verdict, traceability, exposure, run envelope"* — traceability and exposure models **did
+  not exist**. Found by reading the source, not the docstring. It happens to be true now.
+- **`extra="forbid"` was chosen deliberately, over a recommendation of `ignore`.** The
+  user's position was that strictness matches the gate's fail-closed posture; the counter
+  was that `forbid` fails *loudly* (downtime) where `ignore` fails *silently* (corruption).
+  Resolved as **two tiers, not one setting**: contracts stay permissive, models are strict.
+  The user's principle was right; only the position needed narrowing. It is pinned by a
+  test so it cannot drift back.
+- **The parity test caught its own exception on its first run**, unplanned: `TraceabilityLink`
+  is a model with no contract, because the traceability contract declares that object
+  *inline* (no `title` to join on). M3 cannot add a schema file — `contracts/` is M1's
+  alone (§0.4). Resolved with an explicit, **self-invalidating** `INLINE_MIRRORS` entry:
+  the shape is still checked against the inline object, and if M1 ever gives it a `title`
+  the test fails until the exception is deleted. **Request for M1: promote it to
+  `traceability-link.schema.json`** so parity is a clean bijection.
+- **A guard was proven not to fire, and the claim it backed was overstated.** The first
+  draft of `test_exposure_accepts_metric_function_output` asserted only that values
+  round-tripped, so de-typing `by_operator` to a bare `dict` (the contract's own
+  `{"type": "object"}`) still passed — the *type* was never pinned, although the model
+  docstring claimed it was. Fixed by asserting a malformed count is rejected. Caught by a
+  5-mutation guard harness (`/tmp/opencode/m3_guard_proof.py`, self-reverting, outside the
+  repo): **all 5 mutations now fire**, and the suite is green after restore. Same rule as
+  Session 16 — a guard never seen failing is not a guard.
+- **Deviation from the brief, recorded rather than silently taken:** AC 1 named
+  `test_schemas_contracts.py` for the parity assertion, but `backend/tests/` is M17's path
+  (§0.2) and that file is not in the §0.4 contended list. A new M3-exclusive test file
+  avoided a two-owner collision, and it deliberately does **not** duplicate the enum,
+  fixture-load or round-trip tests already living in `test_schemas_contracts.py`.
+- **API endpoints:** none defined, changed or removed. **Dependencies added:** none — reused
+  the 7 `backend/requirements.txt` pins (rule 9). **Contracts/fixtures changed:** none, so
+  the validator result is a non-regression check rather than a new assertion.
+- **New conventions/patterns:**
+  1. **A mirror is strictly stricter than its contract, and that is stated as a two-tier
+     design** — contracts are the permissive interchange layer, models are the strict
+     in-process trust layer. Without the framing it reads as a bug.
+  2. **An exception must be self-invalidating.** A hand-maintained allowlist rots; pairing
+     it with an assertion that *fails when the exception is no longer needed* is what makes
+     it safe to have one at all.
+  3. **When a strict model makes a not-yet-written path raise, write the obligation down
+     instead of loosening the model.** Two such paths are recorded (the `sha256` artifact
+     envelope; M9's superset record). A documented landmine M9 meets deliberately beats a
+     silent key drop.
+  4. **A test that pins a value is not a test that pins a type.** The `by_operator` miss is
+     the generalisable lesson: round-trip equality survives a de-typing, so type claims
+     need their own negative assertion.
+  5. **First module shipped; 17 remain.** Wave 0 (M1, M11, M12) is still unbuilt, and
+     **Wave 0 gates Wave 1** — M4 needs M2 + M11, M5 needs M4. M3 was cheap and is done;
+     it does not unblock the critical path.
+- **Open at archive:** D1–D13 still unsettled (D1 still blocks M7/M8/M9/M16); the models
+  have **zero product callers** (`architecture.md` §11.10) until M4–M9/M13/M15 consume
+  them; M1 has two open requests from this session (promote the traceability-link schema,
+  and the `findings.schema.json` its own AC 2 calls for); `criterion` and `exposure` still
+  have no fixture pair, so they are tested with constructed values rather than corpus data.
 ### Session 18 (M1 contracts, orphan closure + findings): 2026-09-27
 
 - **`/start` protocol run.** Target: M1 "Contracts + validator". Scope chosen with the
