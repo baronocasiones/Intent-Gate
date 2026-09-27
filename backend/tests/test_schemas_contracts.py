@@ -3,8 +3,9 @@
 Pydantic models mirror contracts/ (single source). Fixtures are the
 frontend's API (convention 4) — both fixtures and all four examples in
 contracts/examples/ must validate against their schemas, every schema on disk
-must have a pair, and the validator script itself is exercised exactly as CI
-runs it.
+must have a pair, the served copy under frontend/public/ must stay
+byte-identical to its canonical one, and the validator script itself is
+exercised exactly as CI runs it.
 """
 import importlib.util
 import json
@@ -15,10 +16,12 @@ from pathlib import Path
 
 import jsonschema
 
+from app.metrics.false_certified import OPERATORS
 from app.models.schemas import CriterionVerdict, EvidenceTier, RunRecord, Verdict
 
 ROOT = Path(__file__).resolve().parents[2]
 CONTRACTS = ROOT / "contracts"
+PUBLIC_FIXTURES = ROOT / "frontend" / "public" / "fixtures"
 
 # Module-level literal for the five probe names — parallels SEVEN_CLASSES in
 # test_metric.py. This pins the probe vocabulary so a later session cannot
@@ -42,13 +45,20 @@ def _resolver_for(schema_name: str, schema: dict) -> jsonschema.RefResolver:
     )
 
 
-def _validate_pair(schema_name: str, fixture_name: str) -> None:
-    """Declared change (Convention 10): fixture_name is now a repo-relative path
-    resolved against ROOT, not against the old FIXTURES constant (removed)."""
+def _validate_path(schema_name: str, fixture_path: Path) -> None:
+    """Validate an artifact at an explicit path against its contract. Takes a Path
+    rather than a repo-relative name because M2's served copy lives outside
+    fixtures/, under frontend/public/."""
     schema = json.loads((CONTRACTS / schema_name).read_text())
-    fixture = json.loads((ROOT / fixture_name).read_text())
+    fixture = json.loads(fixture_path.read_text())
     resolver = _resolver_for(schema_name, schema)
     jsonschema.Draft7Validator(schema, resolver=resolver).validate(fixture)
+
+
+def _validate_pair(schema_name: str, fixture_name: str) -> None:
+    """Declared change (Convention 10, M1): fixture_name is a repo-relative path
+    resolved against ROOT, not against the old FIXTURES constant (removed)."""
+    _validate_path(schema_name, ROOT / fixture_name)
 
 
 def test_verdict_literal_matches_contract_enum():
@@ -66,13 +76,91 @@ def test_evidence_tier_is_exactly_e0_to_e6():
 
 
 def test_pydantic_run_record_accepts_demo_fixture():
+    """Flipped 2026-09-27 (M2): the demo run is no longer the all-PENDING/E0 stub
+    (docs/modules.md M2 criterion 4). Pins the concrete §1.7 worked-example values."""
     demo = json.loads((ROOT / "fixtures" / "demo_run.json").read_text())
     run = RunRecord(**demo)
     assert run.run_id == "demo"
+    assert run.status == "rejected"  # D9 default — the §1.2 lifecycle is lowercase
     assert run.measured is False
     assert len(run.verdicts) == 2
-    assert all(v.verdict == "PENDING" for v in run.verdicts)
-    assert all(v.evidence_tier == "E0" for v in run.verdicts)
+    ac1, ac2 = run.verdicts
+    assert (ac1.criterion_id, ac1.verdict, ac1.evidence_tier) == ("AC-1", "CERTIFIED", "E4")
+    assert ac1.locations == ["src/refund.py:64"]
+    assert (ac2.criterion_id, ac2.verdict, ac2.evidence_tier) == ("AC-2", "REJECTED", "E2")
+    assert ac2.locations == ["src/refund.py:88"]
+
+
+def test_demo_run_fixture_is_not_a_stub():
+    """M2 criterion 4, self-enforcing: the corpus must keep mixing outcomes, keep real
+    locations, and keep a tier above E0 — a dashboard that only ever renders emptiness
+    proves nothing."""
+    verdicts = json.loads((ROOT / "fixtures" / "demo_run.json").read_text())["verdicts"]
+    assert {v["verdict"] for v in verdicts} == {"CERTIFIED", "REJECTED"}
+    assert all(v["locations"] for v in verdicts)
+    assert any(v["evidence_tier"] != "E0" for v in verdicts)
+    # A placeholder rationale is a stub with extra steps.
+    assert all("stub" not in v["rationale"].lower() for v in verdicts)
+
+
+def test_public_demo_run_is_byte_identical_to_canonical_fixture():
+    """The public/ copy is what Vite serves at /fixtures/demo_run.json. It held the
+    traceability payload under a run filename (M2 finding 3); byte-equality is what stops
+    the two copies drifting apart again."""
+    public = (PUBLIC_FIXTURES / "demo_run.json").read_bytes()
+    assert public == (ROOT / "fixtures" / "demo_run.json").read_bytes()
+
+
+def test_public_demo_run_validates_against_run_contract():
+    """The served copy is not in the validator's PAIRS — that list pairs run.schema.json
+    with fixtures/demo_run.json only — so the contract is checked here."""
+    _validate_path("run.schema.json", PUBLIC_FIXTURES / "demo_run.json")
+
+
+def test_traceability_fixture_describes_the_same_run_as_the_run_fixture():
+    """The matrix and the run are one run. M2's traceability fixture said E0 with no
+    locations while the run said E4/E2 — two copies of one run disagreeing."""
+    run = json.loads((ROOT / "fixtures" / "demo_run.json").read_text())
+    matrix = json.loads((ROOT / "fixtures" / "demo_traceability.json").read_text())
+    assert matrix["run_id"] == run["run_id"]
+    assert {link["criterion_id"]: link["evidence_tier"] for link in matrix["links"]} == {
+        v["criterion_id"]: v["evidence_tier"] for v in run["verdicts"]
+    }
+
+
+def test_demo_exposure_validates_against_exposure_contract():
+    """Since M1 landed, exposure.schema.json has a PAIRS entry — but it points at
+    contracts/examples/exposure.json, the unmeasured null stub that pins the honest
+    pre-measurement state. This fixture is a different artifact carrying a real measured
+    rate, and it is not in PAIRS, so it is still validated here."""
+    _validate_pair("exposure.schema.json", "fixtures/demo_exposure.json")
+
+
+def test_demo_exposure_is_measured_with_a_rate_pointing_the_good_way():
+    """Low is good (§1.7): a rate near 1.0 would show a gate that certifies violated
+    specs, which is the failure this product exists to prevent."""
+    exposure = json.loads((ROOT / "fixtures" / "demo_exposure.json").read_text())
+    assert exposure["measured"] is True
+    assert exposure["false_certified_rate"] is not None
+    assert 0.0 < exposure["false_certified_rate"] < 0.5
+
+
+def test_demo_exposure_keys_every_operator_with_counts():
+    """Generated by false_certified_rate(), which always keys all 7 OPERATORS — keep the
+    fixture in step with the code's actual output shape, not the 2-key sample in §1.7."""
+    exposure = json.loads((ROOT / "fixtures" / "demo_exposure.json").read_text())
+    assert set(exposure["by_operator"]) == set(OPERATORS)
+    for counts in exposure["by_operator"].values():
+        assert set(counts) == {"certified", "total"}
+        assert all(isinstance(n, int) and n >= 0 for n in counts.values())
+
+
+def test_demo_exposure_shows_a_false_certified_and_an_unexercised_operator():
+    """M2 criterion 5 needs a real number to render, and honest zeros: an operator the
+    mutation run never touched must read 0/0, not a fabricated count."""
+    by_operator = json.loads((ROOT / "fixtures" / "demo_exposure.json").read_text())["by_operator"]
+    assert any(c["certified"] > 0 and c["total"] > 0 for c in by_operator.values())
+    assert any(c["total"] == 0 for c in by_operator.values())
 
 
 def test_criterion_verdict_roundtrip():
