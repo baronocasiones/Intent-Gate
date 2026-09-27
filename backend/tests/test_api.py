@@ -3,9 +3,14 @@
 Characterization of the live/stub endpoints. Stub responses flip when the
 store wiring lands (§11.2) — update these deliberately alongside the code.
 """
+from pathlib import Path
+
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.main import app
+from app import db as db_mod
+from app.main import app, mount_dashboard
+from app.orchestrator.pipeline import enqueue_run, run_pipeline
 
 client = TestClient(app)
 
@@ -47,16 +52,81 @@ def test_webhook_run_ids_differ_per_call():
     assert len(ids) == 5
 
 
-def test_api_runs_list_is_stub():
+def test_api_runs_list_serves_newest_first(monkeypatch):
+    """R2: the index, newest-first — the old `{"runs": []}` stub is gone."""
+    stamps = iter([
+        "2026-09-27T10:00:00+00:00",
+        "2026-09-27T10:00:01+00:00",
+        "2026-09-27T10:00:02+00:00",
+    ])
+    monkeypatch.setattr(db_mod, "now_iso", lambda: next(stamps))
+    ids = [enqueue_run({"n": i}) for i in range(3)]
     res = client.get("/api/runs")
     assert res.status_code == 200
-    assert res.json() == {"runs": []}
+    runs = res.json()["runs"]
+    assert [r["run_id"] for r in runs] == ids[::-1]
+    assert all(set(r) == {"run_id", "status"} for r in runs)
+    assert all(r["status"] == "queued" for r in runs)
 
 
-def test_api_run_detail_is_stub_echoing_id():
-    res = client.get("/api/runs/run-abcdef12")
+def test_api_run_detail_unknown_id_is_404():
+    """R2: today the endpoint echoed any id with `status: "pending"` — a stub,
+    not a lookup. Unknown ids now 404."""
+    res = client.get("/api/runs/run-doesnotexist")
+    assert res.status_code == 404
+
+
+def test_api_run_detail_queued_run_has_no_artifact_yet():
+    run_id = enqueue_run({"action": "opened"})
+    res = client.get(f"/api/runs/{run_id}")
     assert res.status_code == 200
-    assert res.json() == {"run_id": "run-abcdef12", "status": "pending"}
+    body = res.json()
+    assert body["run_id"] == run_id
+    assert body["status"] == "queued"
+    assert body["verdicts"] == [] and body["measured"] is False
+    assert body["artifact_path"] is None
+
+
+def test_api_run_detail_executed_run_serves_row_plus_artifact():
+    """Row lifecycle status (D-e) + the chain's artifact, with its pointer."""
+    payload = {"action": "opened", "pr": 142,
+               "requirement": "AC-1: refunds over $100 require supervisor approval."}
+    run_id = enqueue_run(payload)
+    run_pipeline(payload, run_id)
+    res = client.get(f"/api/runs/{run_id}")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["run_id"] == run_id
+    assert body["status"] == "pending"
+    assert body["measured"] is False
+    assert isinstance(body["verdicts"], list)
+    assert body["artifact_path"] is not None
+    assert body["artifact_path"].endswith(f"{run_id}.json")
+
+
+def test_dist_path_climbs_two_levels_to_repo_frontend():
+    """Pins M15's _dist fix: three levels land outside the project."""
+    from app import main as main_mod
+    expected = Path(main_mod.__file__).resolve().parents[2] / "frontend" / "dist"
+    assert Path(main_mod._dist) == expected
+
+
+def test_dashboard_mount_serves_dist_when_present(tmp_path):
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "index.html").write_text("<h1>gate</h1>")
+    fresh = FastAPI()
+    assert mount_dashboard(fresh, str(dist)) is True
+    res = TestClient(fresh).get("/")
+    assert res.status_code == 200
+    assert "gate" in res.text
+
+
+def test_dashboard_mount_absent_dist_mounts_nothing(tmp_path):
+    fresh = FastAPI()
+    before = len(fresh.routes)
+    assert mount_dashboard(fresh, str(tmp_path / "nope")) is False
+    assert len(fresh.routes) == before
 
 
 def test_api_metrics_stub_shape():

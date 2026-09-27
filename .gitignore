@@ -3,3 +3,7 @@ AGENTS.md
 __pycache__/
 *.pyc
 .pytest_cache/
+# Runtime persistence defaults are CWD-relative (architecture.md §6) — the first
+# real server run drops these into the repo tree; never track them.
+attestation.db
+artifacts/

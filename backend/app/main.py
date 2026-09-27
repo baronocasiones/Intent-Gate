@@ -38,7 +38,22 @@ def health() -> JSONResponse:
 
 
 # Serve built frontend when present; API-first otherwise.
-_dist = os.path.join(os.path.dirname(__file__), "..", "..", "..", "frontend", "dist")
-_dist = os.path.abspath(_dist)
-if os.path.isdir(_dist):
-    app.mount("/", StaticFiles(directory=_dist, html=True), name="dashboard")
+def _dashboard_dir() -> str:
+    """`<repo>/frontend/dist` — two levels up from `backend/app` (M15's _dist
+    fix: the old three-level climb landed outside the project, so the mount
+    silently never activated)."""
+    here = os.path.dirname(__file__)
+    return os.path.abspath(os.path.join(here, "..", "..", "frontend", "dist"))
+
+
+def mount_dashboard(target_app: FastAPI, dist_dir: str | None = None) -> bool:
+    """Mount a built dashboard, returning whether anything was mounted."""
+    dist = dist_dir or _dashboard_dir()
+    if os.path.isdir(dist):
+        target_app.mount("/", StaticFiles(directory=dist, html=True), name="dashboard")
+        return True
+    return False
+
+
+_dist = _dashboard_dir()
+mount_dashboard(app)
