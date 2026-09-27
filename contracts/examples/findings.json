@@ -1,0 +1,7 @@
+{
+  "criterion_id": "AC-2",
+  "probe": "ERROR_PATH",
+  "result": "refuted",
+  "location": "src/refund.py:88",
+  "note": "no retry path"
+}

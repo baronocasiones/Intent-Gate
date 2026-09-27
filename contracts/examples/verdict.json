@@ -1,0 +1,7 @@
+{
+  "criterion_id": "AC-1",
+  "verdict": "CERTIFIED",
+  "evidence_tier": "E4",
+  "locations": ["src/refund.py:42"],
+  "rationale": "supervisor-approval guard confirmed present at the function entry point"
+}
