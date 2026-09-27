@@ -48,10 +48,14 @@ def test_enqueue_run_ids_unique():
 
 
 def test_jobs_submit_enqueues_and_drains_cleanly():
-    """§11.1 characterization: submit() puts on the queue; nothing consumes it.
+    """§11.1 characterization — FLIPPED (M15 core slice, rule 7).
 
-    The test drains the queue itself so the module-level queue stays clean
-    for other tests — the app never starts worker().
+    The old claim ("submit() puts on the queue; nothing consumes it … the app
+    never starts worker()") is no longer true: main.py's lifespan starts
+    worker(), which consumption is pinned by
+    `test_worker_is_coroutinefunction_and_lifespan_starts_it`. What stands:
+    submit() puts exactly one envelope on the queue, and this test still
+    drains it itself so the module-level queue stays clean for other tests.
     """
     from app.orchestrator import jobs
 

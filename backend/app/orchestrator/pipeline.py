@@ -14,78 +14,43 @@ and inventing `failed` for an unexamined run would misreport a fail-closed
 default as a crash. `status` is a free string in `run.schema.json`, so this
 cannot violate the contract.
 
-Persistence is a deliberate shim (modules.md M15 core slice): `db.py` and
-`store/artifacts.py` are used as-built and untouched; the glue lives here
-because orchestrator/ is shim-approved for this session. Reads
-(`list_run_rows` / `fetch_run_row`) are here for the same reason — routers are
-M15's files and import from here rather than growing query code of their own.
+Persistence goes through M14's `db.py` helpers — writes via `save_run` /
+`set_status`, reads via `get_run` / `list_runs`, exactly as db.py's docstring
+assigns them (M10 writes, M15 reads). This module owns no SQL and no
+connection tuning (§0.4: db.py and store/ are called, never edited). The row
+readers stay re-exported here so routers import from one place instead of
+growing query code of their own.
 """
-import sqlite3
 import uuid
-from datetime import datetime, timezone
 
-from ..config import DATABASE_URL
-from ..db import get_db
+from .. import db
 from ..store import artifacts
 from ..gates import ingest, extract, parse, verify, adjudicate, emit as emit_gate
 from . import jobs
 
-SQLITE_PREFIX = "sqlite:///"
-
-
-def _db_path(url: str = DATABASE_URL) -> str:
-    """`db.get_db()` wants a file path; config carries a sqlite:/// URL."""
-    if not url.startswith(SQLITE_PREFIX):
-        raise ValueError(f"only sqlite:/// URLs are supported, got {url!r}")
-    return url[len(SQLITE_PREFIX):]
-
-
-# Resolved once at import (same style as store/artifacts.py's ARTIFACT_DIR).
-# Tests redirect it via monkeypatch — see backend/tests/conftest.py, which
-# keeps every test off the repo tree (Convention 3).
-DB_PATH = _db_path()
-
-
-def _now() -> str:
-    # ISO-8601 string (M14: the column is TEXT and the type must be pinned by
-    # a test — test_api.py pins it on the read path).
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute("PRAGMA journal_mode=WAL;")
-    conn.executescript(
-        "CREATE TABLE IF NOT EXISTS runs ("
-        "id TEXT PRIMARY KEY, status TEXT NOT NULL, "
-        "created_at TEXT NOT NULL, artifact_path TEXT);"
-    )
-    conn.row_factory = sqlite3.Row
-    return conn
-
 
 def _set_status(run_id: str, status: str) -> None:
-    """Flip an existing row; a no-op when the row never got created."""
-    conn = _connect()
+    """Flip an existing row on the crash path. The row may never have been
+    created (a direct call that failed before `_mark_running`), so rowcount 0
+    is tolerated here: this helper only *tries* to record the failure, and the
+    re-raise after it is what keeps rule 6 honest — never a swallowed error."""
+    conn = db.get_db()
     try:
-        conn.execute("UPDATE runs SET status = ? WHERE id = ?", (status, run_id))
-        conn.commit()
+        db.set_status(conn, run_id, status)
     finally:
         conn.close()
 
 
 def _mark_running(run_id: str) -> None:
-    """Ensure the row exists and is `running` — no-op update if it pre-exists
-    (the enqueue path inserted it as `queued` first)."""
-    conn = _connect()
+    """Ensure the row exists and reads `running`: flip the `queued` row the
+    enqueue path inserted; when the row is absent (a direct `run_pipeline`
+    call minting its own id), insert it as `running` instead. Rowcount 0 here
+    means *create*, not *pass* — the final flip is where a missing row must
+    fail loud (rule 6)."""
+    conn = db.get_db()
     try:
-        conn.execute(
-            "INSERT OR IGNORE INTO runs (id, status, created_at, artifact_path) "
-            "VALUES (?, 'running', ?, NULL)",
-            (run_id, _now()),
-        )
-        conn.execute("UPDATE runs SET status = 'running' WHERE id = ?", (run_id,))
-        conn.commit()
+        if db.set_status(conn, run_id, "running") == 0:
+            db.save_run(conn, run_id, "running")
     finally:
         conn.close()
 
@@ -106,18 +71,13 @@ def _final_status(record: dict) -> str:
 def enqueue_run(payload: dict) -> str:
     """Mint a run id, persist the `queued` row, submit to the jobs queue.
 
-    Plain INSERT (not OR IGNORE): an id collision surfaces as a loud failure
-    rather than silently serving a different run's row.
+    `db.save_run` is a plain INSERT (not OR IGNORE): an id collision surfaces
+    as a loud failure rather than silently serving a different run's row.
     """
     run_id = f"run-{uuid.uuid4().hex[:8]}"
-    conn = _connect()
+    conn = db.get_db()
     try:
-        conn.execute(
-            "INSERT INTO runs (id, status, created_at, artifact_path) "
-            "VALUES (?, 'queued', ?, NULL)",
-            (run_id, _now()),
-        )
-        conn.commit()
+        db.save_run(conn, run_id, "queued")
     finally:
         conn.close()
     jobs.submit({"run_id": run_id, "payload": payload})
@@ -141,15 +101,17 @@ def run_pipeline(payload: dict, run_id: str | None = None) -> dict:
         verdict = adjudicate.run(findings)
         record = emit_gate.run(verdict)
         path = artifacts.write_artifact(run_id, record)
-        conn = _connect()
+        conn = db.get_db()
         try:
-            conn.execute(
-                "UPDATE runs SET status = ?, artifact_path = ? WHERE id = ?",
-                (_final_status(record), path, run_id),
-            )
-            conn.commit()
+            written = db.set_status(conn, run_id, _final_status(record), path)
         finally:
             conn.close()
+        if written == 0:
+            # The row vanished between `_mark_running` and now: a defect, and
+            # a run whose row does not exist must not read as a pass (rule 6).
+            # Raising inside the try lands in the except below, which records
+            # `failed` (a no-op — the row is gone) and re-raises: loud twice.
+            raise RuntimeError(f"run row disappeared before final status: {run_id}")
     except Exception:
         # A crash must never leave a run looking alive or certified (rule 6);
         # the row says `failed` and the exception still propagates to the
@@ -159,42 +121,35 @@ def run_pipeline(payload: dict, run_id: str | None = None) -> dict:
     return record
 
 
+def _project(row: dict) -> dict:
+    """`db.py` rows key on `id` (the column name); the API shape is `run_id`
+    (run.schema.json / rule 3 — the endpoint's contract does not move because
+    persistence named the column differently)."""
+    return {
+        "run_id": row["id"],
+        "status": row["status"],
+        "created_at": row["created_at"],
+        "artifact_path": row["artifact_path"],
+    }
+
+
 def list_run_rows() -> list[dict]:
-    """All runs, newest first (created_at, insertion order as tiebreak)."""
-    conn = _connect()
+    """All runs, newest first — M14's `list_runs`: `created_at DESC` with the
+    `id DESC` tiebreak, capped at 50 (db.py's default limit; the cap is
+    documented rather than hidden behind an unbounded query)."""
+    conn = db.get_db()
     try:
-        rows = conn.execute(
-            "SELECT id, status, created_at, artifact_path FROM runs "
-            "ORDER BY created_at DESC, rowid DESC"
-        ).fetchall()
-        return [
-            {
-                "run_id": r["id"],
-                "status": r["status"],
-                "created_at": r["created_at"],
-                "artifact_path": r["artifact_path"],
-            }
-            for r in rows
-        ]
+        return [_project(r) for r in db.list_runs(conn)]
     finally:
         conn.close()
 
 
 def fetch_run_row(run_id: str) -> dict | None:
-    """One run's row, or None when the id is unknown (router turns that into 404)."""
-    conn = _connect()
+    """One run's row in router shape, or None when the id is unknown (the
+    router turns that into 404)."""
+    conn = db.get_db()
     try:
-        r = conn.execute(
-            "SELECT id, status, created_at, artifact_path FROM runs WHERE id = ?",
-            (run_id,),
-        ).fetchone()
-        if r is None:
-            return None
-        return {
-            "run_id": r["id"],
-            "status": r["status"],
-            "created_at": r["created_at"],
-            "artifact_path": r["artifact_path"],
-        }
+        row = db.get_run(conn, run_id)
     finally:
         conn.close()
+    return None if row is None else _project(row)

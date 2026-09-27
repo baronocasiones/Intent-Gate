@@ -4,12 +4,10 @@ Detail is the run envelope (run.schema.json's four keys) plus artifact
 pointers, and 404s for an unknown id — the old stub echoed any id back with
 `status: "pending"`, which was a stub, not a lookup.
 """
-import json
-import os
-
 from fastapi import APIRouter, HTTPException
 
 from ..orchestrator.pipeline import fetch_run_row, list_run_rows
+from ..store import records
 
 router = APIRouter(prefix="/api/runs")
 
@@ -36,12 +34,14 @@ def get_run(run_id: str):
 
     path = row["artifact_path"]
     if path is not None:
-        if not os.path.isfile(path):
-            # Row points at a file that is not there — a defect, not an empty
-            # result. Loud (500), never a silent null.
+        # M14's records.read_artifact resolves the canonical store path
+        # (artifacts.artifact_path_for) — the same resolver write_artifact
+        # used to produce the row's pointer — so row and file cannot drift.
+        data = records.read_artifact(run_id)
+        if data is None:
+            # Row points at an artifact that is not there — a defect, not an
+            # empty result. Loud (500), never a silent null.
             raise HTTPException(status_code=500, detail=f"artifact missing for {run_id}")
-        with open(path, encoding="utf-8") as fh:
-            data = json.load(fh)
         inner = data.get("record") if isinstance(data.get("record"), dict) else {}
         # emit writes the adjudicate output under `record` today; M9's target
         # record conforms to run.schema.json directly — read either.
