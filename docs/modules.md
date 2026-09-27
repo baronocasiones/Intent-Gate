@@ -870,6 +870,19 @@ the injected-payload demo depend on it); `worker()` is started once at app start
   the module's own deliverable and file downstream wiring as a request — hence AC1
   ticks with serving noted as R2's, while §M14 AC1 (written-by-M10 *and* read-by-M15)
   stays unticked with the write half annotated.
+- **One guard here had no failure mode (Session 27, `00aa0bd`) — the only code change
+  that module received.** `test_worker_with_poisoned_caps_refuses_before_consuming`
+  queues one work item and deliberately no `None` sentinel, so `assert_read_only`
+  raising is the *only* thing that can end the call. Delete the gate and `worker()`
+  consumes the item and blocks forever on `await q.get()` — the suite **hangs** instead
+  of failing. Found by a mutation run that had to be killed by a 900s timeout rather
+  than reporting a victim. Fixed by bounding the call with
+  `asyncio.wait_for(..., timeout=5)`, so the hang becomes a `TimeoutError` — not a
+  `PermissionError`, so `pytest.raises` fails with a real traceback. **Not a weakening**:
+  with the gate present the `PermissionError` still propagates and is still required,
+  and the gate-removal mutation now kills the test **by name in 5.18s**. The lesson is
+  module-level, not test-level: *a loop under test with no natural exit must be bounded
+  by the test, or the guard can only pass or hang.*
 
 **Size:** S. **Needs:** M9, M14. **Risk:** low effort, high unblock value — this is what
 makes the API and dashboard show real data.
