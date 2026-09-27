@@ -1032,30 +1032,39 @@ reports whether the suite catches them. Useful for M17; it is **not** repo code.
 ### M15 — API surface
 
 **Purpose:** the four endpoints plus static hosting — the whole external contract.
-**Code:** `backend/app/routers/webhooks.py` (live), `runs.py` and `metrics.py` (stubs),
-`backend/app/main.py`. **Today:** `POST /webhooks/github` accepts any JSON (real
-delivery or hand-injected demo body on the same path) and mints an id; `GET /api/runs`,
-`/api/runs/{id}`, `/api/metrics` return hard-coded stubs. **Known defect:** `main.py`
-resolves `frontend/dist` by climbing **three** levels from `backend/app/`, landing outside
-the project, so the static mount silently never activates even when the dashboard is
-built.
+**Code:** `backend/app/routers/webhooks.py` (live), `runs.py` (real since R2), `metrics.py`
+(stub, deliberately — D-a), `backend/app/main.py`. **Today:** `POST /webhooks/github` accepts
+any JSON (real delivery or hand-injected demo body on the same path) and — since R1 — persists
+a queued row and submits it; `GET /api/runs` lists index rows newest-first, `/api/runs/{id}`
+serves row + artifact and 404s an unknown id; `/api/metrics` returns the honest unmeasured stub.
+**Defect closed (R2):** the `_dist` climb is two levels, and `mount_dashboard()` is extracted
+so a test proves the mount appears when a `dist` exists.
 
-**Acceptance criteria**
-- [ ] `GET /api/runs` lists real rows (newest first) from M14; `GET /api/runs/{id}`
+**Acceptance criteria** (Session 25: R2 `ab2849c`)
+- [x] `GET /api/runs` lists real rows (newest first) from M14; `GET /api/runs/{id}`
       returns the run envelope plus artifact pointers, and a `404` for an unknown id
-      (**today it echoes any id with `status: "pending"`** — that is a stub, not a lookup).
+      (**it used to echo any id with `status: "pending"`** — that was a stub, not a
+      lookup). *Superseded detail:* the detail route reads the artifact defensively
+      (`.get` defaults) rather than through the strict `RunRecord`, because M9's record is
+      a contract *superset* (D15) and an M8-only record carries no `status` — a strict read
+      would 500 on real output. `read_run_record` stays the enforcing reader; revisit when
+      the envelope is contracted.
 - [ ] `GET /api/metrics` aggregates M13's function over stored mutation results and keeps
-      the exposure contract's three keys exactly (a test pins the key set).
-- [ ] **Fix the `_dist` path** (two levels, not three) and prove it: a test that the
+      the exposure contract's three keys exactly (a test pins the key set). **Deferred by
+      decision (D-a):** the mutation harness is out, so there is nothing to aggregate; the
+      three-key honest stub is a *surface*, not a gap.
+- [x] **Fix the `_dist` path** (two levels, not three) and prove it: a test that the
       mount appears when a `dist` directory exists is the honest fix, not a comment.
 - [ ] Webhook: verify the GitHub signature when a secret is configured (**D7**), keep the
       injected-payload path working with no secret (demo survival), and submit the run
-      to the queue (needs M10 + the `main.py` lifespan change).
+      to the queue (needs M10 + the `main.py` lifespan change). *Two thirds done:* the
+      submit + lifespan half landed with R1 (`a7178d2`); D7 HMAC remains open and
+      out of scope for this build.
 - [ ] GitHub write-back (PR comment + check run) is a **stretch** (**D13**), not a P0 —
       the non-zero exit is the merge-blocking claim and it already works.
-- [ ] Flip the three stub-response tests in `test_api.py` in the same change (rule 7);
-      the route-table test must keep passing (no routes added or removed without
-      updating it).
+- [x] Flip the stub-response tests in `test_api.py` in the same change (rule 7);
+      the route-table test keeps passing (no routes added or removed without
+      updating it). Two flipped, four added, `test_api.py` 8 → 13.
 
 **Size:** M. **Needs:** M10, M13, M14. **Note:** M15 owns `main.py`, so M10 and any
 lifespan work must go through here.
@@ -1138,7 +1147,9 @@ land.
 ### M18 — Demo runbook + env
 
 **Purpose:** make the demo reproducible by someone who did not build it, and survive a
-failed live call. **Code:** `backend/.env.example`; the runbook lives in this section.
+failed live call. **Code:** `backend/.env.example`; `scripts/attest.py` (landed, Session 25);
+the runbook lives in this section — **still to be appended**, and it is not a runbook until a
+foreign pair of hands has run it.
 
 **Runbook (target state):**
 1. `pip install -r backend/requirements.txt`
@@ -1153,13 +1164,32 @@ failed live call. **Code:** `backend/.env.example`; the runbook lives in this se
    (`https://arch-thinkpad.tailbb0f08.ts.net` to `127.0.0.1:8000`, public TLS verified) —
    reusable, no cloudflared/ngrok needed.
 
-**Acceptance criteria**
+**Acceptance criteria** (Session 25: `ab2849c`)
 - [ ] The runbook is executed **by someone who did not write it**, start to finish, and
-      the failure is fixed. An unrun runbook is not a runbook.
-- [ ] The demo survives a dead watsonx.ai: with `MOCK_LLM=true` or pre-computed
-      artifacts, the full verdict-to-exposure path still renders (rule 4).
+      the failure is fixed. An unrun runbook is not a runbook. **Not yet:** the CLI half is
+      built and smoke-proven end to end, but the written runbook (steps 1–6 below, plus
+      the Bob invocation) has not been appended or walked by anyone else.
+- [x] The demo survives a dead watsonx.ai: with `MOCK_LLM=true` or pre-computed
+      artifacts, the full verdict-to-exposure path still renders (rule 4). *Partly this
+      session:* the whole chain runs with no LLM call at all (M7 is a mock stub carrying
+      its provenance in-band), and `attest.py --direct` needs no server and no network.
+      The dashboard half still depends on M16 (never built).
 - [ ] Fallback video recorded (Convention 6); final 4 hours are rehearsal only.
-- [ ] `.env.example` documents every variable M11/M14 read, with safe defaults.
+- [x] `.env.example` documents every variable M11/M14 read, with safe defaults. Verified
+      against source, not from memory: `WATSONX_API_KEY`, `WATSONX_PROJECT_ID`,
+      `WATSONX_URL`, `DATABASE_URL`, `MOCK_LLM`, `ARTIFACT_DIR` — all six present.
+
+**Shipped this session — `scripts/attest.py` (M18), stdlib-only so Bob can run it with any
+interpreter.** HTTP mode (default): POST `fixtures/demo_payload.json` to `/webhooks/github`,
+poll `GET /api/runs/{id}` until the status leaves `{queued, running}`, print the verdict and
+traceability, exit derived from `status` (0 iff `certified`). `--direct`: run the pipeline
+in-process, exit with the record's `exit_code`. Fail-closed everywhere — no run id, refused
+connection, unparseable payload, or a run that never terminates all exit 1.
+**Deviation from the plan, recorded:** the plan says "exit with the run's `exit_code`", but
+no served field and no contract carries it (§1.7's response has `status` only, and
+`run.schema.json` requires `run_id, status, verdicts, measured`). Contracts are frozen (D-f),
+so the CLI **derives** the exit from `status` instead of adding a key — §1.5 makes the two
+equivalent, and the derivation can only ever be too strict, never too lax.
 
 **Size:** S. **Needs:** M11, M15.
 
@@ -1685,3 +1715,33 @@ kept out of this file, per Session 19's precedent.
   merge. **Re-verified at `2048e7c` after R4/R2 landed (`c073dbe`, `2048e7c`): 399
   passed, 0 failed both legs, validator 6/6, tree clean — all 16 guards green against
   the real chain.**
+
+### 2026-09-27 — Session 25 (M15/R2 + M18): serve real runs, `_dist` fix, Bob CLI (`ab2849c`)
+- **Session shape:** `/start` planned M14 + M17 + M18 against the refactor plan; the user then
+  reassigned the whole build to one agent and said "execute". Postures settled at `/start` and
+  honoured here: **M14 verify-only** (no edits — done and frozen by the plan), **M17
+  gate-keeper** (define green, police rule 7, no new coverage), **M18 build**. The M4 + R1
+  merges and R2 landed here; **R4 was explicitly skipped** (user instruction; another lane
+  shipped `c073dbe`), and the lanes were kept strictly disjoint by file.
+- **M14 — verified, not touched.** All six checklist items pass; AC-1 is discharged by its
+  *callers* (M10 writes, M15 reads), which is the shape the brief predicted when it ticked
+  the seam and left the callers open. Its 40 guards ran twice — before and after R2 started
+  reading the same store — green both times.
+- **M15/R2 — the API stopped lying.** `GET /api/runs` lists index rows newest-first;
+  `GET /api/runs/{id}` serves the row's lifecycle status plus the artifact's
+  `verdicts`/`measured`, points at `artifact_path`, and 404s an unknown id instead of echoing
+  it. `_dist` climbs two levels now, with `mount_dashboard()` extracted so a test proves the
+  mount appears *and* no-ops — the honest fix the criterion asked for, not a comment claiming
+  one. Why the detail route reads the artifact defensively rather than through the strict
+  `RunRecord` is documented at the brief, not only here.
+- **M17 — one micro-task, no scope creep.** `.gitignore` now covers the CWD-relative
+  `attestation.db` / `artifacts/`. The brief's optional hardening (3.10 in the matrix, D10
+  `RefResolver`) stays out: D10 is "not during the build", and the matrix was left alone.
+- **M18 — the Bob CLI, and one thing the plan got wrong.** `scripts/attest.py` (stdlib-only)
+  + 9 guards. The plan's "exit with the run's `exit_code`" has no such field anywhere in the
+  served or contracted surface, so the CLI derives the exit from `status` rather than adding
+  a contract key under a frozen contract. Recorded consequence: a `pending` status is
+  **terminal** (D-e — the chain completed), so listing it as in-flight would hang every
+  finished run. Caught by the first real cold E2E, not by the fake-gate test.
+- **Not claimed:** the runbook append, the foreign dry-run, the fallback video, the push.
+  **M18 is not done** — one of its four criteria is met.

@@ -677,6 +677,49 @@ failure** on both legs (the failure re-proven pre-existing on parent
   (Session 21 rules); the two AST import guards were proven separately by
   inserting `import app.llm` into throwaway copies — both fire.
 
+### 2026-09-27 — Session 25 (M15/R2 + M18): serving guards + the Bob CLI suite
+- **`test_api.py` 8 → 13.** Flipped (rule 7, in the same commit as the code):
+  `test_api_runs_list_is_stub` → `test_api_runs_list_serves_newest_first` (three
+  enqueued runs under a **mocked clock** — Session 23's time-order rule: ids are
+  minted in order and the expectation is the reverse, so a wrong-column sort
+  cannot satisfy it) and `test_api_run_detail_is_stub_echoing_id` →
+  `test_api_run_detail_unknown_id_is_404`. New: queued-detail (row status, empty
+  verdicts, null pointer), executed-detail (`run_pipeline` end-to-end → row +
+  artifact + `artifact_path` suffix), `_dist` two-level path pin, and
+  `mount_dashboard` present/absent.
+- **New `test_attest_cli.py` (9 tests, M18-exclusive like M3's and M14's files).**
+  The fake gate is a `http.server` on `127.0.0.1:0` serving a **scripted** status
+  list whose last entry repeats — so a test can say "this never terminates" by
+  passing a single entry. No live server, no Bob, no LLM, ever.
+- **The exit-derivation table is a table, not an example:** certified → 0;
+  rejected → 1; queued (never terminal) → 1 with the timeout message;
+  **pending → terminal and still 1**; refused connection → 1; missing payload →
+  1. A single happy-path assertion would have shipped the `pending` bug below
+  unchallenged.
+- **The first test written for a failure was testing a different failure.**
+  `test_http_connection_refused_exits_nonzero` passed a missing payload path, so
+  the CLI returned before opening a socket — the network branch was never
+  reached, and the test would have passed with the error handler deleted. Found
+  by reading the test against its own name (Session 23's audit rule), not by
+  running it. Split into two, each reaching its own branch.
+- **One guard is a mutation battery in disguise:** `test_attest_script_is_stdlib_only`
+  walks the AST and subtracts `sys.stdlib_module_names`. Deleting the "no
+  `import httpx`" requirement is exactly the kind of change that only *looks*
+  harmless, because `httpx` is already a project dependency and would work at
+  runtime — it would only break Bob running the file with a bare interpreter.
+- **Repo-pollution guard, one per direction:** `test_direct_mode_runs_pipeline_and_blocks_on_stub_emit`
+  runs the real in-process chain with `DATABASE_URL`/`ARTIFACT_DIR` pointed into
+  `tmp_path` and then asserts `attestation.db` and `artifacts/` do **not** exist
+  in the repo root — the CWD-relativity limitation would otherwise show up as an
+  untracked file after every demo run. Its exit assertion (1) is chosen because
+  it is stable across the thin slice: the demo payload violates AC-2, so the
+  exit is 1 on today's hard-coded emit *and* on R4's derived one, which is why
+  the CLI guard survived another lane's rewrite of `emit.py`.
+- **Status:** 399 passed + validator 6/6 on 3.11.9 and 3.12.14. The 62 guards
+  owned by this session's surface (13 API + 9 CLI + 40 persistence) were also
+  run in isolation, and the M14 block twice — before and after the R2 endpoint
+  started reading the same store.
+
 ### 2026-09-27 — M10 lane (R1): persist/submit/worker/lifespan guards (`a7178d2`)
 - **Scope:** `test_pipeline.py` 6 → 16 tests + new `backend/tests/conftest.py`
   (autouse; the file the suite was missing — `enqueue_run` now persists and every
