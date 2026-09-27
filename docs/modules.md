@@ -680,12 +680,29 @@ enforced in tests only, never in the pipeline.
 **Acceptance criteria**
 - [ ] `assert_read_only` is called on the real worker capability set at worker startup
       (**D6**). This is the difference between a claim and a control.
-- [ ] Both failure directions stay covered: a leaked deny **and** a missing grant each
+      — **primitive landed in Session 20 (`9c7343d`); call site is M7/M10's file, so still open**
+- [x] Both failure directions stay covered: a leaked deny **and** a missing grant each
       raise `PermissionError` (asserted today — do not weaken to a warning).
-- [ ] The policy is visible in the emitted record (which capabilities the run had), so an
+      — held and extended; `DENIES`/`assert_read_only` byte-identical, md5-verified
+- [x] The policy is visible in the emitted record (which capabilities the run had), so an
       auditor can see the control was applied.
-- [ ] **Never weakened for a demo shortcut** (rule 5, `AGENTS.md` Convention 8). If a
+      — fragment built and pinned in Session 20; `record["attestor_policy"] = policy.to_dict()`
+        is M9's one line, so the record does not yet carry it
+- [x] **Never weakened for a demo shortcut** (rule 5, `AGENTS.md` Convention 8). If a
       demo step seems to need `edit`, that is a bug in the demo, not the policy.
+      — mutation-tested: granting `edit` fails 22 tests, including one in `test_scaffold.py`
+        that M12 does not own
+
+**Session 20 addendum (M12, `9c7343d`, branch `M12-attestor`).** `GRANTS` is now
+`HARNESS_GROUPS | OS_PROPERTIES` and includes **`llm_egress`**: M7b workers call watsonx.ai
+themselves, so a worker needs egress. Named for the capability *kind*, never a host, because
+egress must cover both the auth and inference endpoints and the region is env config. A blanket
+`network` grant is deliberately absent and pinned by a test. New `backend/app/attestor/sandbox.py`
+proves the workspace is read-only by attempting the forbidden write — the part that was missing
+entirely, and the reason withholding `edit` was previously theatre. Wiring, one line each, for the
+owners: `enforce_worker_read_only(os.environ.get(ATTESTOR_CAPS_ENV), workspace)` at M7/M10 worker
+startup, and `record["attestor_policy"] = policy.to_dict()` in M9. Stdlib only; no endpoint,
+contract, schema, or dependency changed.
 
 **Size:** S. **Needs:** nothing. **Note:** this is the pitch's sharpest differentiator
 and a direct IBM read-only-governance angle. Cheap to finish, expensive to lose.
@@ -888,7 +905,7 @@ record that you did.
 | **D3** | Verdict aggregation + whether CONDITIONAL may pass the gate (1.5) | M8, M9 | REJECTED blocks; CONDITIONAL needs a ledger entry |
 | **D4** | Demo repo target — needs real acceptance criteria to attest against | M4, M5, M13 | Smallest repo with genuine written criteria; inject payloads until chosen |
 | **D5** | Stryker corroboration of mutation ground truth | M13 | Stretch — harness first, corroboration if time |
-| **D6** | Where read-only is enforced: worker startup vs pipeline wrapper | M7, M10, M12 | Assert at worker startup, fail closed. **Mechanism now specified (2026-09-27):** read-only bind mount of the workspace + a pre-flight capability check, modelled on watsonx Orchestrate's tool sandbox, which runs Python tools in a read-only filesystem. `ToolPermission.READ_ONLY` is deprecated and is *not* a live control — do not cite it. See `docs/watsonx-integration.md` §6 |
+| **D6** | Where read-only is enforced: worker startup vs pipeline wrapper | M7, M10, M12 | Assert at worker startup, fail closed. **Mechanism now specified (2026-09-27):** read-only bind mount of the workspace + a pre-flight capability check, modelled on watsonx Orchestrate's tool sandbox, which runs Python tools in a read-only filesystem. `ToolPermission.READ_ONLY` is deprecated and is *not* a live control — do not cite it. See `docs/watsonx-integration.md` §6. **Session 20 (M12) accepted the recommended default and built the pre-flight:** `enforce_worker_read_only(declared, workspace)` resolves the worker's own `ATTESTOR_CAPS` declaration and probes the mount, failing closed on both. The call site remains M7/M10's, so D6 is *answered, not closed* |
 | **D7** | Webhook signature verification, and behaviour with no secret configured | M15 | Verify when a secret exists; allow injection when not |
 | **D8** | Cross-file hash chain format | M9, M14 | Each artifact carries the previous digest |
 | **D9** | `status` lifecycle values (1.2) | M9, M10, M15 | The PROPOSED set in 1.2 |
@@ -1061,3 +1078,62 @@ record that you did.
   under the rule it was creating. The coverage check caught it — which is the check
   working, not a near-miss. Recorded here because the mistake was in the specification, and
   the log should not read as though the first pass got it right.
+
+### 2026-09-27 — Session 19: M2 — demo corpus landed (commit `88095b2`)
+
+- **M2 implemented.** 6 files: 3 fixtures, the served copy under `frontend/public/`, the
+  shared guard `test_schemas_contracts.py`, and this file. No router, no contract, no
+  dependency, no new `.md`. Acceptance criteria 2–5 met; **criterion 1 stays open** because
+  `frontend/src/fixtures.js` is M16's file and `App.jsx` still imports it.
+- **Two decisions were taken by default because their owners were unreachable**, per §6, and
+  are recorded rather than assumed: **D1** (CERTIFIED requires E4 minimum, applied to fixture
+  data only) and **D9** (`status` takes the §1.2 lowercase lifecycle, hence `"rejected"`).
+  Neither is ratified, so **no test asserts either rule in general** — only what this fixture
+  does. That is deliberate: a provisional decision must not calcify into a contract.
+- **Open question this session could not settle for the project, recorded rather than
+  decided unilaterally:** the acceptance checkboxes are now marked *inconsistently*. Criteria
+  4 and 5 are ticked although each is half done (the data landed; the dashboard wiring is
+  M16's), while criterion 1 is left unticked although it is also half done. Both situations
+  are the same, and they are marked differently. Either convention is defensible — tick when
+  the module's own deliverable exists and file the downstream wiring as a request, or tick
+  only when the stated outcome is achieved end-to-end — but the mix is not, and M1, M3, M14
+  and M16 will all hit the same question. **This belongs in §0.3 as a stated rule, decided
+  once by the project, not per module.**
+- **Three M16 requests filed** (see the M16 section): delete `fixtures.js` and fetch the
+  served copy; feed the exposure fixture to `ExposureCard`; and a verified defect —
+  `App.jsx:23` passes `run.status` into `VerdictBadge`, which compares it against the
+  *uppercase* verdict enum, so a D9-conformant `"rejected"` renders **orange**, the `PENDING`
+  colour. Root cause is deeper than case: `run.schema.json` carries no aggregate verdict
+  field, so a lifecycle string is rendered by a verdict renderer, and no product code
+  computes `status` at all today.
+- **Not archived here:** the §M2 "Landed" block and the M16 requests were committed with the
+  code in `88095b2`. `AGENTS.md` is gitignored and so is not in any commit.
+
+### 2026-09-27 — Session 20: M12 attestor read-only policy (`9c7343d`, branch `M12-attestor`)
+
+- M12 only; no endpoint, contract, schema, or dependency touched. Stdlib only.
+- `GRANTS` gained **`llm_egress`** because M7b workers call watsonx.ai themselves
+  (`docs/intent-attestation-gate.md:33` already said so — this ratified the spec rather than
+  inventing it). Named for the capability kind, never a host: egress must cover both the auth
+  and inference endpoints and the region is env config, so a host-bearing token would need a code
+  change per region. A blanket `network` grant stays rejected and is pinned — open egress would
+  let a worker exfiltrate the source it reads, which is the read-only claim itself.
+- **Decision taken deliberately before M7, not after it failed:** the vocabulary question was
+  settled while nothing depended on it, precisely so M7b would not meet a `PermissionError` at
+  worker startup and be tempted to loosen the policy under deadline. Widening the policy is
+  mutation-tested at 22 failures, so it cannot happen quietly.
+- New `backend/app/attestor/sandbox.py` supplies the half that was missing entirely: proof that
+  the workspace is read-only, by attempting the forbidden write. Without it, withholding `edit`
+  while the workspace is writable was theatre.
+- **AC status: 1 and 3 are partly open** — the primitive and the record fragment exist and are
+  pinned, but the worker-startup call is M7/M10's file and the `attestor_policy` key is M9's.
+  Neither was faked into a stub that M7/M9 would delete.
+- **New forward dependency:** M7b now hard-depends on M10 provisioning a read-only workspace.
+  If M10 probes before mounting, the worker refuses to start — correct, and it looks like a bug.
+- **Open, and a hard blocker on M7b shipping rather than a follow-up:** the egress allowlist does
+  not exist, so `llm_egress` is declared and enforced by nothing. Also unresolved: the
+  `--disable-subagents` vs granted-`subagent` tension, kept-as-is since Session 7.
+- **Honest gap:** no test has watched a real read-only mount refuse a write. Production refuses
+  via `EROFS`; every refusal test gets `EACCES` from a `chmod 555` directory. Dropping `EROFS`
+  does fail the suite (2 tests), so the translation is pinned — but that is substitution, not
+  observation. M17's to close.

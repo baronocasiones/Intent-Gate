@@ -4,9 +4,9 @@ Append-only module record for the project's test suite. Architecture context
 lives in `docs/architecture.md` (code-faithful) and `docs/intent-attestation-gate.md`
 (concept); this file records only how the suite is organized, run, and extended.
 
-Status: **scaffold + architecture-derived unit tests + M1 contracts guard** — 89 tests
-(79 pre-existing + 10 new in `test_schemas_contracts.py`). Last verified 2026-09-27 on
-Python **3.14.7** (isolated `/tmp/opencode/venv`, `PYTHONDONTWRITEBYTECODE=1 -p no:cacheprovider`).
+Status: **scaffold + architecture-derived unit tests + M1 contracts guard + M2 corpus guard
++ M12 attestor policy** — 151 tests (79 pre-existing + 10 M1 + 8 M2 + 54 M12). Last verified
+2026-09-27 on Python **3.14.7** (isolated `/tmp/opencode/venv`, `PYTHONDONTWRITEBYTECODE=1 -p no:cacheprovider`).
 The 79-test baseline is green on 3.11.9 and 3.12.14 per Session 13 and Session 17 records.
 **3.14.7 is not the CI matrix (3.11 + 3.12) — one CI run is owed** for this session's 10
 new tests before they are trusted on the matrix.
@@ -23,6 +23,9 @@ backend/tests/
   test_gates.py                    §3 stage stubs: shapes, stage order, exit_code=1 blocks
   test_pipeline.py                 §1/§4 chaining, run-id format, §11.1 unwired-queue characterization
   test_policy.py                   §8 attestor GRANTS/DENIES exact sets, fail-closed both ways
+                                   — Session 20: 9 → 63 tests. Adds the declaration resolver,
+                                   the worker-startup gate, the workspace read-only proof
+                                   (EROFS/EACCES, undetermined, no-residue), and the auditor record
   test_metric.py                   §9 seven operators, rate math, exposure-schema conformance
   test_llm.py                      §7 mock determinism; watsonx fails loud; zero-network proof
   test_schemas_contracts.py        §10 pydantic↔contract parity, fixture validation, validator wrap;
@@ -101,6 +104,15 @@ the attestor box ↔ `test_policy.py`, the metering note ↔ `test_llm.py` /
   harness yet — add one when the queue is wired.
 - **Python 3.10 floor**: dependency floor (fastapi/uvicorn/jsonschema/pytest
   all require ≥3.10) is not in the CI matrix; add if floor support matters.
+- **No test exercises a real read-only mount** (Session 20). `sandbox.py`'s production refusal
+  path is `EROFS` from a `--read-only` bind mount; every refusal test gets `EACCES` from a
+  `chmod 555` directory, because a real `EROFS` needs root and this box has no such mount. The
+  constant is pinned and the errno translation is covered by the one substituted call in the file
+  — dropping `EROFS` fails 2 tests — but that is coverage by substitution, not observation.
+  **M17's to close:** a CI leg that runs `test_policy.py` against an actual read-only mount.
+- **The attestor enforcement path has no integration test** (Session 20). `enforce_worker_read_only`
+  has zero callers outside its own unit tests, so nothing proves M7/M10 will wire it. Covered only
+  when the worker lands.
 
 ## CI
 
@@ -189,3 +201,56 @@ on 3.11.9 and on 3.12.14, validator OK ×2 on both.
   `PYTHONDONTWRITEBYTECODE=1 -p no:cacheprovider`. Validator: 6 OK lines + "OK 6/6
   schemas covered", exit 0. `git status --porcelain` shows only §2 files.
   3.14 is not the CI matrix — one CI run owed.
+
+### 2026-09-27 — Session 19: M2 corpus guard — 8 new tests, and a merge that needed a human
+
+- **+8 tests in `test_schemas_contracts.py` (17 → 27), 89 → 151 total.** The guard file is
+  now shared by M1, M2 and M3 and is the most contended file in the suite.
+- **One guard flipped deliberately, in the same change** (Convention 4).
+  `test_pydantic_run_record_accepts_demo_fixture` characterised the stub by asserting 2
+  verdicts, all `PENDING`, all `E0`. That behaviour was deleted, so the test now pins the
+  concrete worked-example values. The flip is recorded in the commit body, not only here.
+- **Added:** corpus-is-not-a-stub (mixes `CERTIFIED`+`REJECTED`, non-empty `locations`, a tier
+  above `E0`, no "stub" rationale); served-copy byte-equality; served copy against
+  `run.schema.json`; run↔traceability coherence; and 4 on the exposure fixture (contract
+  conformance, measured with a rate below 0.5, all 7 operator keys, one false-certified plus
+  one unexercised operator).
+- **M1/M2 merge needed a real resolution, not a pick-one-side.** M1 changed `_validate_pair`
+  so its argument is a repo-relative path resolved against `ROOT`, and removed the `FIXTURES`
+  constant. Git's auto-merge left M2's older `FIXTURES`-based `_validate_pair` directly
+  beneath it, with no conflict marker. Taking both would have read
+  `fixtures/fixtures/demo_run.json` and raised `NameError` on the deleted constant. Resolved
+  to one `_validate_path(schema, Path)` plus one `_validate_pair(schema, repo-relative)`
+  delegating to it. All 18 tests from both sides survive; the merged file is 27.
+- **Two docstrings corrected because the merge made them false.** Both claimed a schema "has
+  no validator pair (M1's criterion 1)"; M1's `PAIRS` now covers all 6 schemas. They are
+  still validated in-suite, but for a different reason: `PAIRS` points `exposure` at
+  `contracts/examples/exposure.json`, the unmeasured null stub, whereas
+  `fixtures/demo_exposure.json` is a different artifact carrying a real measured rate.
+- **Method note worth keeping:** a green suite did **not** prove the merge was clean, and a
+  false "silent loss" was reported from a `grep` whose escaping was broken. A merge is
+  verified by diffing the result against *both* parents — not by the tests passing, and not
+  by one grep. Both parents must be diffed in both directions.
+
+### 2026-09-27 — Session 20: M12 policy guard — 9 → 63 tests (89 → 151 total)
+
+- `test_policy.py` grew from 9 to 63 tests, all on 3.11.9 and 3.12.14. Suite total 89 → 151.
+  Validator 6/6, exit 0. No new dependency, no new test file — M12's declared guard stayed single.
+- **Mutation-tested, which is the part that makes this guard mean something.** Eight mutations,
+  **none survived**: probe never writes (10 fail), `os.access` shortcut (7), `EROFS` dropped from
+  `REFUSAL_ERRNOS` (2), undetermined folded into refused (5), record mints `workspace_readonly`
+  without a proof (1), `enforce_workspace_read_only` returns instead of raising (1), `workspace`
+  made optional again (1), and — the forbidden direction — `edit` added to `GRANTS` (**22**,
+  including `test_scaffold.py::test_attestor_policy_ok`, a file M12 does not own).
+- **Layered deliberately, so no single test is load-bearing.** The exact-set pin is the obvious
+  guard, but deleting it still leaves disjointness, the happy-path `assert_read_only(GRANTS)` call,
+  the vocabulary checks, the record-shape test and `test_scaffold.py` catching a widening. A guard
+  that only fires during a demo rehearsal gets disabled rather than debugged; this one would have
+  to be edited in six places.
+- **Two implementation traps worth remembering for any future filesystem-touching test:**
+  `chmod 555` breaks `tmp_path` teardown (`shutil.rmtree` fails on a read-only dir — the mode must be
+  restored in a `finally`), and running as root defeats permission bits entirely, so those tests
+  `skipif` on `os.geteuid() == 0` with the reason stated rather than failing confusingly.
+- **One mock exists in the file** and is named as such: `test_refusal_witness_is_the_errno_the_kernel_gave`
+  substitutes the OS call, because a genuine `EROFS` needs root. Every *refusal* test still attempts
+  a real write. The re-raise path is reached for real instead, via a self-referential symlink (ELOOP).
