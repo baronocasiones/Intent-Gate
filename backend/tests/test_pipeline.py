@@ -171,12 +171,28 @@ def test_launch_caps_default_resolves_to_grants(monkeypatch):
 
 async def test_worker_with_poisoned_caps_refuses_before_consuming(monkeypatch):
     """D-g fail-closed: a foreign declaration refuses startup — and the
-    queued item is untouched, proving the check runs BEFORE consuming."""
+    queued item is untouched, proving the check runs BEFORE consuming.
+
+    The 5s bound is load-bearing, not belt-and-braces. `worker()` is an
+    unbounded loop that exits on the `None` sentinel, and this test queues one
+    item and deliberately no sentinel — so the gate raising is the only thing
+    that can end the call. Remove `assert_read_only` from `worker()` and the
+    loop consumes the item, then blocks forever on `await q.get()`: the suite
+    HANGS instead of failing, which is how this was found (a mutation run that
+    had to be killed by timeout rather than reporting a victim).
+
+    `asyncio.wait_for` converts that hang into a `TimeoutError`, which is not a
+    `PermissionError`, so `pytest.raises` fails with a real traceback naming
+    this test. It does not weaken the assertion: with the gate present the
+    `PermissionError` still propagates immediately and is still what is
+    required. Proven: the gate-removal mutation now kills this test instead of
+    timing the harness out.
+    """
     monkeypatch.setenv(ATTESTOR_CAPS_ENV, "edit")
     q: asyncio.Queue = asyncio.Queue()
     q.put_nowait({"run_id": "run-poison-1", "payload": {}})
     with pytest.raises(PermissionError):
-        await jobs.worker(queue=q)
+        await asyncio.wait_for(jobs.worker(queue=q), timeout=5)
     assert q.qsize() == 1
 
 

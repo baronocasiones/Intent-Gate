@@ -6,6 +6,24 @@ how the code implements it, endpoint by endpoint, module by module. Single sourc
 idea remains `IBM BOB.pdf` (Adrian, pp. 14–25).
 
 Status: **the gate runs end-to-end over HTTP, with real logic in every stage it
+claims, and the gate is now reachable as a Bob MCP tool** (Session 27 verification
+round, 2026-09-27). Last verified against code: **`5d359a3` + the
+`test_pipeline.py` bound committed alongside this line — 448 passed, 0 failed on
+3.11.9 AND 3.12.14, validator exit 0 (6/6) on both legs, tree clean**, plus a **cold
+end-to-end run** (server → webhook → `scripts/attest.py` → `GET /api/runs/{id}`)
+serving `status: rejected`, AC-1 CERTIFIED@E4 and AC-2 REJECTED@E2, CLI exit 1, and
+**16 of 16 demo-critical guards mutation-proven lethal** with the control green
+first. Real: M4 ingest, M5 extract, M8 adjudicate (E0–E6 ladder), M9 emit (derived
+`exit_code` + flat run record), M10 worker (read-only gate wired at `jobs.py:39`),
+M12 attestor (10-key record, both refusal paths), M14 persistence, M15 serving,
+M18 CLI **and the MCP server** (`.bob/` config + `scripts/mcp_attest_server.py`).
+Still stub or absent: **M7 real probes** (mock findings only), `/api/metrics`
+(hard-coded), live watsonx.ai, GitHub write-back, and the **dashboard build on this
+branch** (`frontend/package-lock.json` and the §11.19 fixes are present in the
+working tree but **uncommitted**, so they are not part of the branch yet). §11 gaps
+and `docs/test-suite.md` carry the detail. History below.
+
+Status: **the gate runs end-to-end over HTTP, with real logic in every stage it
 claims** (Session 25, 2026-09-27). Last verified against code: **`ac9e816` —
 400 passed, 0 failed on 3.11.9 AND 3.12.14, validator exit 0 (6/6) on both
 legs, tree clean**, plus a **cold end-to-end run** (server → webhook →
@@ -416,9 +434,21 @@ wired yet.
     bracketed notes on this session's entry.
 
 19. **The dashboard cannot render a live run, so "never built" understates it** (found
-    2026-09-27, Session 25 verification round, read-only — not fixed). Every record to date
-    describes the frontend as *unbuilt*, which is true (`node_modules/` and `dist/` are both
-    absent) but reads as "needs `npm install` and a build". Reading the source shows two
+    2026-09-27, Session 25 verification round, read-only — not fixed). **BOTH HALVES NOW
+    FIXED IN THE WORKING TREE BY A PARALLEL SESSION, AND NOT YET COMMITTED — so this gap
+    is closed on the tree and still open on the branch.** Re-measured 2026-09-27 (Session
+    27): `App.jsx` now imports `fetchRunList` and resolves a real id via
+    `await fetchRun(runs[0].run_id)` instead of the impossible `fetchRun('demo')`;
+    `frontend/src/fixtures.js` is deleted (so the `PENDING@E0` weak fallback is gone);
+    `frontend/package-lock.json` exists, so `npm install` has run; and
+    `VerdictBadge.jsx` normalises the incoming string with `.toUpperCase()`, adds the
+    `CONDITIONAL` branch it previously lacked, and cites this gap in a comment — so the
+    lowercase-`status` orange-everything defect is fixed at the component.
+    **`git show HEAD:frontend/src/components/VerdictBadge.jsx` still carries the broken
+    comparison**, so on the committed branch both defects are still live. An uncommitted
+    fix in a shared tree is not a fix — it becomes one when the owning session commits it.
+    Owner: M16 (the parallel session holding the frontend). The original finding follows,
+    as written on the day.
     defects that survive a successful build:
     - `App.jsx` calls `fetchRun('demo')` — a **hard-coded run id that cannot exist**. The
       detail route 404s an unknown id, so `fetchRun` returns `null`, `setLive(false)` never
@@ -1328,3 +1358,20 @@ was correct throughout; the drift was entirely in prose. All ten are now correct
   2. **A duplicate AC is invisible to a marker scan.** Markers went to zero and the section was still wrong. Re-read the *assembled* region against its neighbours; conflicts in a structured list (AC lists, tables, numbered gaps) corrupt structure, not just text.
   3. **When a merge makes a record's present-tense prose false, fix the prose and leave the dated entry.** A session-log entry is a claim about a point in time and gets layered; a module brief's "**Today:**" is a claim about the tree and is corrected in place. Same distinction as the false-claim rule, applied by *register* rather than by file.
   4. **Dropping a conflicting block can lose an acceptance criterion.** Three of ours were discarded as duplicates on the reasoning that the common region carried them; that was checked by re-listing the assembled ACs, not assumed.
+
+### 2026-09-27 — Session 27 (final verification, read-only + one test fix): 448/448, 16/16 guards lethal, and one guard that hung instead of failing
+- **Instruction:** *"make a final verification tests for this branch then commit if there are neccessary changes that needed to be made."* **One product-adjacent change: a single test bound. No product code, contract, fixture, dependency, endpoint, or gate was touched.**
+- **The branch moved under this session, twice.** It started at `56fb61c` (the M12 merge) and a parallel session committed **`5d359a3`** — M18's Bob MCP integration — mid-verification. All results below are measured at `5d359a3`. Verification ran against a pristine `git archive HEAD` extraction rather than the live checkout, because a parallel session had untracked in-flight files there; that decision is what kept a **harness** failure from being misread as a product failure (below).
+- **Result: 448 passed / 0 failed on 3.11.9 AND 3.12.14, validator `OK 6/6` exit 0 on both legs, tree clean.** `448 collected` matches `448 passed` exactly, measured from `--collect-only` rather than a grep over the run output.
+- **Convention 6, mechanically:** **zero** skip/xfail markers suite-wide (including the 653-line `test_mcp_attest_server.py`, never previously audited), **zero** deleted test files, **zero** renames, **zero** `pytest.raises` removed, test functions **204 → 375** against `origin/refactor`. The suite is 33 tests larger than the count the M12 lane recorded, and none of the growth came from a deletion.
+- **16 of 16 demo-critical guards mutation-proven lethal, zero survivors, control green first, work dir byte-identical after restore.** New this round, covering the code both merges brought in: removing the **D6 read-only gate from `worker()`**; the **gated** and **ungated** `DENIES` refusals; rounding the three-valued mount answer `None` down to `False`; wording the weaker control as a read-only one; and four on Session 26's surface — granting **`execute`** to the attestor mode, allowing subagents, a stray `print()` on the JSON-RPC channel, and pointing `mcp.json` at another script. **Granting `execute` trips three independent guards**, so the read-only differentiator is enforced by the config, not by one assertion.
+- **The finding that justified the one change: a guard that HANGS instead of failing.** `test_worker_with_poisoned_caps_refuses_before_consuming` queues one work item and deliberately no `None` sentinel, so `assert_read_only` raising is the only thing that can end the call. Delete that gate and `worker()` consumes the item, then blocks forever on `await q.get()` — the suite **hangs** rather than reporting a victim, which is how it was caught: a mutation run that had to be killed by timeout. A guard with no failure mode is not a guard; in CI it spends the whole job budget and names nothing. Fixed by bounding the call with `asyncio.wait_for(..., timeout=5)`, which converts the hang into a `TimeoutError` — not a `PermissionError`, so `pytest.raises` fails with a real traceback. **It does not weaken the assertion:** with the gate present the `PermissionError` still propagates immediately and is still what is required. Re-proven both ways: passes on the real tree, and the gate-removal mutation now **kills it by name in 5.18s** instead of hanging.
+- **The control run caught a third harness artifact, and each one was a fact about the code.** Omitting `frontend/` from the copied tree fails 2 guards (the public fixture is byte-pinned to the canonical one). Omitting `.bob/` — new this round — fails 1 and errors 8, because M18's MCP tests read `.bob/mcp.json` and `.bob/custom_modes.yaml`. Both were invisible without the control. The rule is now written into the harness with both entries named.
+- **§11.19 re-measured and split in two.** Both halves are **fixed in the working tree by the parallel frontend session** — `fetchRunList()` resolves a real run id, `fixtures.js` is deleted, a lockfile exists, and `VerdictBadge` now normalises case and has the `CONDITIONAL` branch it lacked, citing §11.19 in a comment. **`git show HEAD:frontend/src/components/VerdictBadge.jsx` still carries the broken comparison**, so on the committed branch both defects remain live. An uncommitted fix in a shared tree is not a fix; the gap now says so instead of being marked closed.
+- **§11.18 re-measured and still open:** M9's `emit.py` contains **zero** references to `attestor_policy`. M12's 10-key record is built, tested and fail-closed, and the consumer that would embed it is still the missing line — so the read-only *proof* does not reach the artefact even though the read-only *gate* now runs in the worker path.
+- **Honest limits of this round, stated rather than glossed:** `bob` is **not on PATH** on this machine, so Session 26's central claim — that the read-only mode is enforced **by the Bob client**, not merely asserted by our config — cannot be re-proven here. What is proven is the config side: 16/16 mutations lethal, including four aimed at `.bob/`. And the dashboard's `node_modules/` and `dist/` remain absent, so no React build was exercised.
+- **New conventions/patterns:**
+  1. **A guard must have a failure mode.** A test that can only pass or hang will, in CI, spend the job budget and report nothing. If a loop under test has no natural exit, the test supplies a bound — this is the same class as the Session 21 note that a collection `ImportError` is a *stronger* kill than an assertion, applied to the timeout axis.
+  2. **Verify a moving branch from a pristine extraction, not the shared checkout.** A parallel session's untracked files made a correct tree look broken; `git archive HEAD` separates the branch from the neighbours' work, and is the only way to make a count mean something.
+  3. **A hang is an ambiguous result and owes a hand-check, exactly like a survivor.** Both are "not a clean kill", and both were resolved the same way: narrow it by running the suspect file alone, then the single test, until the behaviour is named.
+  4. **"Fixed in the tree" and "fixed on the branch" are different claims** — re-verified with `git show HEAD:<file>` rather than by reading the working tree, which is the only check that distinguishes them.

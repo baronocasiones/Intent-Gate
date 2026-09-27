@@ -4,6 +4,20 @@ Append-only module record for the project's test suite. Architecture context
 lives in `docs/architecture.md` (code-faithful) and `docs/intent-attestation-gate.md`
 (concept); this file records only how the suite is organized, run, and extended.
 
+Status: **448 passed, 0 failed, 0 skipped on 3.11.9 AND 3.12.14; validator `OK 6/6`
+exit 0 on both legs** (Session 27 verification round, 2026-09-27), measured at
+`5d359a3` + the `test_pipeline.py` bound committed alongside this line. **The 1
+failure recorded in the header below does not exist on this tree** — it was
+inherited from `main` by the incoming M12 lane and closed here by the M4 merge
+(§11.15). Convention 6 mechanically clean: **zero** skip/xfail markers, **zero**
+deleted test files, **zero** renames, **zero** `pytest.raises` removed, test
+functions **204 → 375** against `origin/refactor`. **16 of 16 demo-critical guards
+mutation-proven lethal**, control run green first, work dir byte-identical after
+restore — including the two Session 26 guards that carry the read-only
+differentiator (granting `execute` in `.bob/custom_modes.yaml` trips three
+independent tests). One guard was found **hanging instead of failing** and is
+fixed in this commit; see the entry at the tail. History below.
+
 Status: **scaffold + architecture-derived unit tests + M1 contracts guard + M3 parity guard
 for all six contracts + the M12 attestor mechanism/record suite + M14 persistence guards** —
 **223 collected: 222 passed, 1 failed, 0 skipped.** The one failure is **pre-existing and
@@ -1018,3 +1032,32 @@ failure** on both legs (the failure re-proven pre-existing on parent
 - **The merge's own test-honesty check:** the 75 `test_policy.py` tests are real on the merged tree (counted from source: 75 `def test_`), and the full run exercises them — `0 skipped`, so none of the root-guarded cases silently stepped aside in this environment. That matters because the incoming commit had to run them `as uid 1000` to avoid exactly that; worth re-checking on any machine where the suite could skip rather than fail.
 - **Convention 6 re-audit on the merged tree:** zero skip/xfail markers, zero deleted test files, zero renames. `test_policy.py` grew 63 → 75 by addition, and the three guards the incoming commit flipped deliberately are flipped **in the same commit** as the code they pin (rule 7).
 - **Cold E2E re-proved after the merge** (a read-only-layer change is exactly the kind that should not move the demo, so it was measured rather than assumed): `rejected`, AC-1 `CERTIFIED@E4` at `src/refund.py:64`, AC-2 `REJECTED@E2` at `src/refund.py:88`, CLI exit 1, zero tracebacks.
+
+### 2026-09-27 — Session 27 (final verification): 448/448 both legs, 16/16 guards proven, and the one necessary change
+- **448 passed / 0 failed on 3.11.9 AND 3.12.14; validator `OK 6/6` exit 0 both legs; tree clean.** Measured at `5d359a3` (M18's Bob MCP integration, committed by a parallel session mid-round) plus the `test_pipeline.py` bound committed with this entry. `448 collected` == `448 passed`, taken from `--collect-only` rather than a grep of the run output.
+- **Convention 6, whole suite, mechanically:** **zero** skip/xfail markers, **zero** deleted test files, **zero** renames, **zero** `pytest.raises` removed, test functions **204 → 375** vs `origin/refactor`. The 653-line `test_mcp_attest_server.py` (33 tests) was audited for the first time here and adds **no** skips.
+- **16 mutations, 16 killed, 0 survivors, 0 bad anchors.** Control green first; the work directory re-run after all restores is green again (448), which is what proves the restores were clean rather than assumed.
+
+  | Mutation | Killed by |
+  |---|---|
+  | M9 re-nest the run record | `test_emit.py::test_emit_output_is_readable_by_the_committed_consumers` + `test_api.py::test_api_run_detail_executed_run_serves_row_plus_artifact` (+1) |
+  | M8 E4 floor `>=4` → `>=1` | `test_adjudicate.py::test_adjudicate_supported_below_e4_is_conditional` |
+  | M8 lift the E2 cap | `test_adjudicate.py::test_adjudicate_demo_pair_certified_and_rejected` + `test_gates.py::test_demo_chain_end_to_end…` + **`test_mcp_attest_server.py::test_attest_run_returns_the_demo_verdict`** |
+  | M9 hardcode `exit_code=1` | `test_emit.py::test_emit_exit_code_is_derived_not_hard_coded` |
+  | M10 success marks `failed` | `test_pipeline.py::test_run_pipeline_transitions_queued_running_pending` (+2) |
+  | M15 drop the 404 | `test_api.py::test_api_run_detail_unknown_id_is_404` |
+  | **M12 remove the D6 gate from `worker()`** | **`test_pipeline.py::test_worker_with_poisoned_caps_refuses_before_consuming`** — *was a hang, see below* |
+  | M12 ungated path stops consulting `DENIES` | `test_policy.py::test_ungated_record_cannot_advertise_a_denied_capability` (+1) |
+  | M12 gated path stops consulting `DENIES` | `test_policy.py::test_enforce_worker_read_only_rejects_declared_edit` (+2) |
+  | M12 round the 3-valued mount answer to `False` | `test_policy.py::test_a_platform_without_st_read_only_records_undetermined_never_false` |
+  | M12 word the weak control as read-only | `test_policy.py::test_mechanism_names_are_distinct_and_none_of_them_blurs_the_weak_one` |
+  | **M18/BOB grant `execute`** | **`test_mcp_attest_server.py::test_attestor_mode_grants_exactly_read_and_mcp`** (+2) |
+  | **M18/BOB allow subagents** | **`test_mcp_attest_server.py::test_attestor_mode_forbids_subagents_explicitly`** |
+  | **M18 stray `print()` on the JSON-RPC channel** | **`test_mcp_attest_server.py::test_attest_run_reports_the_rate_as_unmeasured_not_zero`** (+2) |
+  | **M18 `mcp.json` points elsewhere** | **`test_mcp_attest_server.py::test_mcp_config_registers_the_gate_server`** (+2) |
+  | M2/M18 corrupt the demo payload | `test_attest_cli.py::test_demo_payload_matches_section_1_7_shape` |
+
+- **The one necessary change, and why it was not optional.** `test_worker_with_poisoned_caps_refuses_before_consuming` had **no failure mode**: it queues one item and no sentinel, so the gate raising is the only exit. Remove the gate and the suite **hangs** — caught because a mutation run had to be killed by a 900s timeout rather than reporting a victim. Bounded with `asyncio.wait_for(..., timeout=5)`; the hang becomes a `TimeoutError`, which is not a `PermissionError`, so `pytest.raises` fails with a real traceback. **Not a weakening** — with the gate present the `PermissionError` still propagates and is still required. Proven both directions: green on the real tree, and the mutation now kills it **by name in 5.18s**. No test was removed, skipped, or relaxed; the count is unchanged at 448.
+- **The control run earned its keep twice more, and both catches were facts about the code.** Omitting `frontend/` fails 2 guards (the public fixture is byte-pinned to the canonical one); omitting `.bob/` — new at this HEAD — fails 1 and errors 8, because M18's tests read `.bob/mcp.json` and `.bob/custom_modes.yaml`. Neither is a product defect, and neither is visible without a control run.
+- **Verification ran against `git archive HEAD`, not the live checkout,** because a parallel session had untracked in-flight files (`scripts/mcp_attest_server.py` and its tests before `5d359a3` landed) that changed the collection count mid-round — 412 → 436 → 448 across three observations of the same nominal branch.
+- **Not verified here, stated rather than glossed:** `bob` is not on PATH on this machine, so M18's claim that the read-only mode is enforced *by the client* is unproven from here; the config side is what the 16 mutations cover. The dashboard's `node_modules/`/`dist/` are still absent, so no React build ran.
