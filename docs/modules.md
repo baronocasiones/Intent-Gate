@@ -1257,6 +1257,78 @@ equivalent, and the derivation can only ever be too strict, never too lax.
 
 **Size:** S. **Needs:** M11, M15.
 
+### Bob IDE integration (Session 26, 2026-09-27) — the gate as an MCP tool
+
+Deliberately **not** "point Bob at `attest.py`". That route needs Bob to run a shell command, and
+granting a shell to verify a diff is the capability §3.3 withholds. The finding that changed the
+design: **Bob's `mcp` tool group is separate from its shell group**, so a custom mode can reach an
+MCP server and still have no terminal. The read-only claim is then something the *client enforces*,
+not something our process asserts about itself.
+
+**Shipped:** `scripts/mcp_attest_server.py` (MCP stdio server, stdlib only — rule 9),
+`.bob/custom_modes.yaml` (the `attestor` mode: `groups: [read, mcp]`, `allowedSubagents: []`),
+`.bob/mcp.json` (stdio registration, `alwaysAllow` on both tools), and
+`backend/tests/test_mcp_attest_server.py` (36 guards).
+
+**Runbook — the Bob path, from a clean checkout.** Rehearsed end to end on 2026-09-27 against
+`bobshell@2.0.5`; the transcript below is measured, not aspirational.
+
+0. **Do not put a credential in `.bob/`.** Export `BOB_API_KEY` in the shell. `test_bob_directory_contains_no_secret`
+   fails the suite if a key-shaped string ever lands in a committed config, because `.bob/` is
+   version-controlled and MCP's config has an `env` key whose whole purpose is carrying a secret.
+1. **Put Bob on the PATH.** `npm i -g bobshell` installs to `~/.npm-global/bin`, which is not on
+   PATH by default. `export PATH="$HOME/.npm-global/bin:$PATH"`.
+2. **Authenticate.** First `bob run` opens a browser to `bob.ibm.com/login`. Export the key, or sign in
+   once interactively — it lands in `~/.bob/settings/auth-secrets.json` and is then picked up
+   automatically. **Spend discipline (Convention 7): always pass `--max-cost` and `--max-turns`.**
+   The hackathon grant is $40; a bare `bob run` has no ceiling.
+3. **Accept the licence, once:** `bob run --accept-license ...` (it persists `licenseConsent: true`).
+   Note the standalone forms `bob --accept-license` and `bob --list-tasks` are **broken in 2.0.5** —
+   they fail with `Invalid --prompt: Too small` before dispatch, so use the subcommand form.
+4. **Trust the folder, once, from the repo root:** `bob run --trust ...`. Without it Bob stops on an
+   interactive "Do you trust this folder?" prompt, which a headless run cannot answer.
+5. **Check the wiring is seen — free, no model call:** `bob mcp list` →
+   `attest-gate: python3 scripts/mcp_attest_server.py | enabled | stdio | workspace`.
+6. **The demo moment:**
+   ```
+   bob run --trust --max-turns 3 --max-cost 0.40 --mode attestor -f json \
+     "Call attest_run with payload_path fixtures/demo_payload.json, then report the status and exit_code it returned."
+   ```
+   **Measured result:** `status: rejected`, `exit_code: 1`, `AC-1 CERTIFIED [E4] src/refund.py:64`,
+   `AC-2 REJECTED [E2] src/refund.py:88`, 2 traceability links, exposure reported unmeasured.
+   `session_costs` 0.153 of a 0.40 cap, `tool_calls: 1`, ~19 s. Bob's own summary repeated the
+   unmeasured marker verbatim — the mode's instruction and the tool's output agreed, which is the
+   point of shipping both.
+7. **Fallback if the mode file is rejected** (a `custom_modes.yaml` key Bob does not like):
+   `bob run --disable-tool-groups edit,execute "…"` — still no shell, and needs no mode file at all.
+
+**Why there is no `cwd` in `.bob/mcp.json`.** The `attest_run` tool calls `run_pipeline(payload)`
+with no `run_id`, which is the documented pure path: the six stages run and **nothing is persisted** —
+no row, no artifact, no chain. The read-only posture therefore holds at the storage layer as well as
+the capability layer, and holds from any working directory (proven by launching from `/`). Since
+relative-path semantics for `cwd` are undocumented, pinning one would trade a real guarantee for
+undefined behaviour. `test_mcp_config_pins_no_working_directory` is where a future change to the
+server's write behaviour has to be revisited.
+
+**Tool-group vocabulary — read from the shipped bundle, not the docs.** `bobshell@2.0.5`
+(commit `2dc180906`) builtin mode definitions use `read` `edit` `execute` `browser` `mcp` `skill`
+`todo` `artifact` `subtask` `subagent` `mode`. **Bob's Bob Shell custom-modes documentation page is
+wrong**: it advertises a `command` group that does not exist in the binary, and omits four real
+ones. The mode file cites the bundle as its provenance and a guard asserts the citation is still
+there, so a reader of the YAML can see why those names were chosen. The docs also document
+`--chat-mode`; the binary has no such flag (0 occurrences) — it is `--mode <slug>`, default `agent`.
+
+**Verified against the real client (the Phase C gap, now closed for Bob Shell):** `bob mcp list`
+discovers the server from the committed config; `bob run --mode attestor` loads the mode, connects
+the MCP server, calls `attest_run`, and returns the §1.7 verdict. **Not verified:** Bob **IDE** — the
+desktop app is not installed, so the IDE-specific surfaces (its own `~/.bob/settings/` global paths
+and its mode picker) are unexercised. Project-level `.bob/` is the same path for both clients, so
+the artifacts are shared; only the *global* paths differ.
+
+**Still open, and it is the same AC as before:** the runbook has now been walked by a second party,
+but the actor was the session that built the tool, so M18's "executed by someone who did not write
+it" criterion is **still unticked**. A teammate running steps 1–7 cold is what closes it.
+
 ---
 
 ## 6. Decisions that gate modules

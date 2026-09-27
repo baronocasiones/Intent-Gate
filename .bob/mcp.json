@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "attest-gate": {
+      "command": "python3",
+      "args": ["scripts/mcp_attest_server.py"],
+      "alwaysAllow": ["attest_run", "attest_exposure_honesty"],
+      "disabled": false,
+      "timeout": 120000
+    }
+  }
+}

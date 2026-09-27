@@ -200,7 +200,10 @@ than returning, so a worker that cannot prove read-only never starts.
 this in demo shortcuts** (standing convention).
 
 **Unwired.** `app.attestor` is imported by `test_scaffold.py` and `test_policy.py` and
-by **nothing else** — no gate, orchestrator or router. §11.5 is the open item.
+by **nothing else** — no gate, orchestrator or router. §11.5 is the open item. **Narrowed by
+Session 26 (§8.2):** the *client* now enforces an equivalent withhold independently, via Bob's
+own mode tool groups. That is a third layer and it is not a substitute for the internal one —
+`enforce_worker_read_only()` still has no caller in the running product, and §11.5 stays open.
 
 ### 8.1 Addendum — Session 20 (M12): declaration vs observation
 
@@ -211,6 +214,73 @@ Everything above this line describes the pre-M12 state and is retained verbatim.
 - **A workspace proof now exists** (`sandbox.py`, §3). `PolicyRecord` carries `workspace_readonly` plus the kernel's own witness, so the emitted record would hold evidence rather than a declaration.
 - **Enforcement is still not live.** `enforce_worker_read_only()` has zero callers; the wiring is M7/M10's and the record key is M9's. §11.5 therefore remains open, narrowed.
 - `DENIES` and the body of `assert_read_only()` are **byte-identical** to their pre-M12 form (md5-verified at commit time). `edit` and `execute` remain withheld.
+
+### 8.2 Addendum — Session 26: a third layer, enforced by the client
+
+The two layers above are ours — a declaration in our own process and a kernel probe. This addendum
+records a layer that is neither: **the IDE the verification is invoked from withholds the same two
+capabilities, and that withholding is a property of the client's configuration rather than of our
+intent.**
+
+**What shipped:** `scripts/mcp_attest_server.py` (MCP stdio server), `.bob/custom_modes.yaml` (an
+`attestor` mode), `.bob/mcp.json` (registration), and 36 guards in
+`backend/tests/test_mcp_attest_server.py`. The mechanism is one fact about Bob: **`mcp` is a tool
+group separate from the shell group.** A custom mode can therefore hold `mcp` and omit `execute`,
+reach this server as a tool, and have no terminal. Pointing Bob at `scripts/attest.py` instead —
+the M18 CLI — would require granting `execute`, i.e. handing the verifier a shell, which is the
+capability §3.3 exists to withhold. The CLI and the server are therefore not two routes to the same
+place: one asks the client for a capability, the other does not.
+
+**`DENIES` is unchanged, and the vocabulary it speaks is the real one.** Two planning errors were
+caught by reading the installed `bobshell@2.0.5` bundle instead of its documentation, and both were
+errors *in the docs*:
+
+| Believed (from docs) | Actual (commit `2dc180906`, builtin mode definitions) |
+|---|---|
+| Shell's shell token is `command`; our `DENIES` is therefore incomplete | `command` does not exist. The vocabulary is `read` `edit` `execute` `browser` `mcp` `skill` `todo` `artifact` `subtask` `subagent` `mode` — so `DENIES = {edit, execute}` was already exactly right, and the planned "client-vocabulary map" was unnecessary |
+| Mode is selected with `--chat-mode` | No such flag (0 occurrences in the bundle). It is `--mode <slug>`, default `agent`, on the `run`/`chat` subcommands |
+
+The mode file cites the bundle as its provenance and `test_mode_file_documents_where_the_vocabulary_came_from`
+fails if that citation is removed, because the file's central claim is only as good as the source it
+was read from — and that source is not the documentation.
+
+**Read-only now holds at three layers, and the third is the strongest because it is not ours:**
+1. `DENIES` in our process (declaration).
+2. `sandbox.py` probing the mount (kernel observation, §8.1).
+3. **The client's own tool groups** — the mode file grants `{read, mcp}` and is loaded by Bob
+   itself. A future edit that widens it is caught by
+   `test_attestor_mode_grants_exactly_read_and_mcp`, which pins the set **exactly** rather than
+   checking against `DENIES`. A deny-list check alone would pass a mode that gained `browser` or
+   `subagent` — each widens the posture without touching the deny list. The two halves are checked
+   against the same `DENIES` constant, so the product's policy and the client's configuration cannot
+   drift apart silently.
+
+**And a fourth property, the one that made `cwd` unnecessary.** `attest_run` calls
+`run_pipeline(payload)` with **no `run_id`** — the documented pure path, where the six stages run
+and nothing is persisted. The tool is therefore read-only at the *storage* layer as well as the
+capability layer, and from any working directory (verified by launching from `/`). Relative-path
+semantics for MCP's `cwd` are undocumented, so pinning one would have traded a real guarantee for
+undefined behaviour; `test_mcp_config_pins_no_working_directory` is the standing reminder of where a
+change to that behaviour would have to be revisited.
+
+**Verified against the real client, 2026-09-27.** `bob mcp list` reads the committed config and
+reports `attest-gate: python3 scripts/mcp_attest_server.py | enabled | stdio | workspace`.
+`bob run --mode attestor` then loads the mode, connects the server, calls `attest_run`, and returns
+the §1.7 verdict (`status: rejected`, `exit_code: 1`, AC-1 `CERTIFIED@E4`, AC-2 `REJECTED@E2`).
+Two product bugs in `bobshell@2.0.5` were found on the way and are recorded in the M18 runbook
+rather than here: the standalone `bob --accept-license` and `bob --list-tasks` forms fail with
+`Invalid --prompt: Too small` before dispatch, and `bob run` blocks on an interactive
+"Do you trust this folder?" without `--trust`. Also unresolved and recorded rather than assumed: the
+bundle resolves a native policy watcher at `policy-watcher/${platform}-${arch}`, and **no
+`linux-x64` build ships** (darwin-arm64, darwin-x64, win32-x64 only). It is required lazily, and
+the runs above completed on linux-x64, so the absence is not fatal on this path — but it is an
+unexplained gap in the package, not a verified design.
+
+**Not verified:** the Bob **IDE** desktop app is not installed, so its own global config paths
+(`~/.bob/settings/` for modes, `~/.bob/settings/mcp.json` for servers) and its mode picker are
+unexercised. Project-level `.bob/` is the same path for both clients, so the shipped artifacts are
+shared; only the global paths differ, and the runbook's step 7 (`--disable-tool-groups edit,execute`)
+is the posture that needs no mode file at all if a client rejects ours.
 
 ## 9. Publishable metric (as coded)
 
