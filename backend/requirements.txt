@@ -1,3 +1,4 @@
+# Direct dependencies: the 7 pins. Everything the product and the suite import.
 fastapi==0.135.3
 uvicorn==0.44.0
 pydantic==2.13.0
@@ -5,3 +6,39 @@ httpx==0.28.1
 jsonschema==4.26.0
 pytest==9.0.3
 pytest-asyncio==1.4.0
+
+# Transitive dependencies, pinned 2026-09-27 (docs/architecture.md §11.14).
+# Why: only the 7 direct deps were pinned, so starlette (via fastapi) floated --
+# measured 1.0.0 on the 3.11.9 machine env against 1.7.0 on every clean install.
+# Each CI run re-resolved transitives, so consecutive green runs were not evidence
+# about the same stack. These pins are the exact set pip resolves from a clean
+# install, frozen on 3.12.14 and verified byte-identical on 3.14.7. The four
+# python_version markers are where the resolver genuinely diverges by interpreter
+# (backports.asyncio.runner / exceptiongroup / tomli exist only below 3.11;
+# rpds-py moved its floor, so 3.10 takes the last compatible build). Verified by
+# rebuilding clean venvs on 3.10 / 3.11 / 3.12 / 3.14 from THIS file -- see
+# docs/test-suite.md. A flat freeze with no markers would NOT install on 3.10.
+annotated-doc==0.0.5
+annotated-types==0.8.0
+anyio==4.15.1
+attrs==26.1.0
+backports.asyncio.runner==1.2.0; python_version < "3.11"
+certifi==2026.7.22
+click==8.5.0
+exceptiongroup==1.3.1; python_version < "3.11"
+h11==0.16.0
+httpcore==1.0.9
+idna==3.20
+iniconfig==2.3.0
+jsonschema-specifications==2025.9.1
+packaging==26.3
+pluggy==1.6.0
+pydantic_core==2.46.0
+Pygments==2.21.0
+referencing==0.37.0
+rpds-py==2026.6.3; python_version >= "3.11"
+rpds-py==0.30.0; python_version < "3.11"
+starlette==1.7.0
+tomli==2.4.1; python_version < "3.11"
+typing-inspection==0.4.4
+typing_extensions==4.16.0
