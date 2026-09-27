@@ -7,3 +7,9 @@ __pycache__/
 # real server run drops these into the repo tree; never track them.
 attestation.db
 artifacts/
+# Frontend build products (M16). node_modules/ is ~200MB of untracked files one
+# `git add .` away from a commit; dist/ is served by FastAPI's mount_dashboard()
+# and is rebuilt from source. package-lock.json IS tracked — reproducible
+# installs are the JS analogue of the §11.14 transitives pinning.
+frontend/node_modules/
+frontend/dist/

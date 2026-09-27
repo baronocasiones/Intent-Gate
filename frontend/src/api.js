@@ -5,8 +5,14 @@ export async function fetchRun(runId) {
   return res.json()
 }
 
-export async function fetchMetrics() {
-  const res = await fetch('/api/metrics')
+// The run index, newest first (M15). This is how the dashboard discovers a run
+// id that can exist: the detail route 404s an unknown id, so a page opened
+// without an explicit `?run_id=` has to ask the server what it has. An empty
+// index (fresh database) is a legitimate answer, not an error — the caller
+// falls back to the fixture. architecture.md §11.19.
+export async function fetchRunList() {
+  const res = await fetch('/api/runs')
   if (!res.ok) return null
-  return res.json()
+  const body = await res.json()
+  return body.runs || []
 }
