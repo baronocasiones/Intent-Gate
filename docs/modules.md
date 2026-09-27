@@ -780,18 +780,22 @@ publishable claim in the project.
 ### M14 — Persistence (db + artifacts)
 
 **Purpose:** the run index and the tamper-evident evidence store. **Code:**
-`backend/app/db.py` (SQLite, WAL, one `runs` table) and `store/artifacts.py`
-(`write_artifact` writes `{sha256, **payload}` to `$ARTIFACT_DIR/{run_id}.json`).
-**Today:** both correct and both with **zero callers** — nothing persists.
+`backend/app/db.py` (SQLite, WAL, one `runs` table + `idx_runs_created_at`;
+`get_db` derives from `DATABASE_URL` unless given an explicit path;
+`save_run`/`set_status` hold the commit; `get_run`/`list_runs` serve reads;
+`now_iso` is the single clock), `store/artifacts.py` (`write_artifact` writes
+`{**payload, sha256, prev_digest}` — payload-first so the store's keys win —
+plus the `prev_digest` D8 seam and the shared `artifact_path_for`), and new
+`store/records.py` (`read_artifact`, `project_run_payload`,
+`read_run_record` — discharges §M3 obligation 1, first product caller of the
+mirrors). **Today:** the seams exist and are guarded (40 tests); **no product
+caller yet** — M10/M15 wire them.
 
 **Acceptance criteria**
-- [ ] `runs` rows are written by M10 and read by M15. `artifact_path` points at the JSON.
-- [ ] `created_at` is an ISO-8601 **string** (the column is `TEXT`; a mutation-lab run
-      showed nothing currently pins the *type*, so add a test that does).
-- [ ] The artifact `sha256` continues to cover the sorted body exactly as today
-      (`test_store_db.py` pins it). Cross-file chaining is M9's job (**D8**).
-- [ ] `ARTIFACT_DIR` and `DATABASE_URL` remain env-driven; tests keep using `tmp_path`
-      so the repo tree stays clean (`docs/test-suite.md` Convention 3).
+- [ ] `runs` rows are written by M10 and read by M15. `artifact_path` points at the JSON. **M14's half is done** (`save_run`/`set_status`/`get_run`/`list_runs` + the artifact path); the callers are pending.
+- [x] `created_at` is an ISO-8601 **string** (`now_iso`, UTC tz-aware; type pinned by `test_save_run_created_at_is_iso8601_string` — landed once, here, not in M17).
+- [x] The artifact `sha256` continues to cover the sorted body exactly as today (`test_store_db.py` pins it, plus the store-keys-win negative). `prev_digest` rides alongside as a PROPOSED, UNCONTRACTED D8 seam (D15) with a self-invalidating guard. Cross-file chaining stays M9's.
+- [x] `ARTIFACT_DIR` and `DATABASE_URL` are env-driven (`DATABASE_URL` now has a reader — `_sqlite_path` strips `sqlite:///`; `config.py` untouched); tests keep using `tmp_path` so the repo tree stays clean (`docs/test-suite.md` Convention 3). **Known limitation, accepted:** both defaults are CWD-relative (recorded in `docs/architecture.md` §6).
 
 **Size:** S. **Needs:** M1. **Note:** a `/tmp/opencode/mutation_lab.py` harness exists
 from an earlier session — it injects deliberate bugs into a scratch copy of the repo and

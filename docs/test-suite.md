@@ -18,6 +18,16 @@ documented dependency floor and 3.14 is a deliberate forward-compatibility leg, 
 owed**, not a fix (see Known gaps). 3.13 has no interpreter on this machine
 and is untested.
 
+**M14 (2026-09-27, this session):** the suite is **210 tests** — the 118 baseline
+moved (`main` gained M2-fixture PR #43 and fix PR #46). **209 pass + 1
+pre-existing failure** on 3.11.9 and 3.12.14 (clean venvs from
+`backend/requirements.txt`; validator exit 0 both legs). The failure is
+`test_models_parity.py::test_demo_traceability_fixture_loads_into_model`
+(M2 fixture drift — E4/E2 in the fixture vs the test's E0 expectation;
+recorded as `architecture.md` §11.15, owners M2+M3, not fixed here). M14's own
+40 tests (33 `test_store_db.py` + 7 `test_store_records.py`) are green on both
+legs, and all 5 new guards are mutation-proven lethal.
+
 ## Layout
 
 ```
@@ -35,7 +45,8 @@ backend/tests/
   test_schemas_contracts.py        §10 pydantic↔contract parity, fixture validation, validator wrap
   test_models_parity.py            M3 model↔contract bijection, field coverage, strictness + honesty pins
   test_api.py                      §5 route table + health/webhook/stub endpoint shapes
-  test_store_db.py                 §6 WAL mode, runs table, sha256-of-sorted-body artifacts
+  test_store_db.py                 §6 WAL mode, runs table, env wiring, commit discipline, sha256 envelope + D8 seam
+  test_store_records.py            §6 typed reads, envelope→RunRecord projection, strict-model loads
   test_config.py                   §3 env defaults/overrides, MOCK_LLM parsing, reload-restore
 ```
 
@@ -57,7 +68,7 @@ needs network access, a database file, or watsonx.ai credentials.
 | §1/§4 | runtime shape, data flow, pipeline chain | `test_pipeline.py` |
 | §3 | six gates, schemas, config, LLM clients, metric, policy | `test_gates.py`, `test_schemas_contracts.py`, `test_models_parity.py`, `test_config.py`, `test_llm.py`, `test_metric.py`, `test_policy.py` |
 | §5 | API surface (health, webhook, runs, metrics) | `test_api.py` |
-| §6 | persistence (SQLite WAL, hash-sha256 artifacts) | `test_store_db.py` |
+| §6 | persistence (SQLite WAL, hash-sha256 artifacts) | `test_store_db.py`, `test_store_records.py` |
 | §7 | LLM dual-mode + spend discipline | `test_llm.py` |
 | §8 | read-only attestor (the differentiator) | `test_policy.py` |
 | §9 | false-certified-rate metric (the "THE NUMBER") | `test_metric.py` |
@@ -223,6 +234,16 @@ on 3.11.9 and on 3.12.14, validator OK ×2 on both. Re-run at Session 18 after
 M3: **100 passed** on both legs, validator OK ×2 on both. **Still unverified
 on GitHub** — the branch has not been pushed, so no remote CI run has ever
 executed this workflow.
+
+**Step-ordering fact (Session 23, read from the workflow source):** the
+steps run install → `pytest` → validator, and GitHub Actions **skips
+subsequent steps after a failure**. So while §11.15 stands, `pytest` exits 1
+on **both** legs (`fail-fast: false` lets both run and both fail) and the
+validator step **never executes** — the green `OK 6/6` we prove locally will
+not appear in CI at all until the suite is red-no-more. Rehearsed locally
+for the M14 merge: merged tree = **211 items → 210 passed + the same §11.15
+failure** on both legs (the failure re-proven pre-existing on parent
+`4b03c55`).
 
 ## Session log (append-only)
 
@@ -524,3 +545,13 @@ executed this workflow.
   now pins all 23 transitives (4 with `python_version` markers), proven by rebuilding
   all four venvs from the file. The Known-gaps bullet above is closed; the §11.12
   guards stay open pending the ownership question, exactly as instructed.
+
+### 2026-09-27 — Session 22: M14 persistence guards (32 + 7 tests)
+- `test_store_db.py` 9 → 32: env wiring (`_sqlite_path` table, default-from-URL, explicit-wins), `now_iso` str/UTC/ordering, `idx_runs_created_at`, commit-survives-reopen, `created_at` ISO-8601-str type pin (M14 AC 2 **and** M17's missing-coverage item — landed once, here), `set_status` rowcount-0 fail-closed signal, newest-first + limit, `prev_digest` default/threading, store-keys-win, and the D15 self-invalidating guard. **No existing test flipped.**
+- New `test_store_records.py` (7, M14-exclusive like M3's parity file): envelope reads, missing→`None`, the M3-obligation-1 projection whitelist (incl. subset tolerance while the envelope is uncontracted), strict-model loads incl. a mixed CERTIFIED/REJECTED record, missing→`None`, malformed→`ValidationError` (the `sandbox.py` posture).
+- **Verification (via subagent — bash denied this session):** 209 passed + 1 pre-existing failure on 3.11.9 and 3.12.14 from clean `requirements.txt` venvs; validator exit 0 both legs; guard proof `/tmp/opencode/m14_guard_proof.py` — 5/5 kills, 0 survivors (control green on the M14 files); `git status` shows only the 5 intended M14 files, no `attestation.db`/`artifacts/` pollution. The failure is the §11.15 M2 drift — M14 verified around it, per Convention 6 the fix belongs to M2+M3.
+- **Follow-up the same day (verification round on user instruction — audit, then commit if changes needed):** reading the tests against their own claims found **3 weaknesses**, all fixed in `test_store_db.py`, no product code touched:
+  (A) `test_write_artifact_hash_independent_of_key_order` was **vacuous** — it hashed two stdlib dumps directly and never called `write_artifact`, so it survived a `sort_keys` deletion that it purported to guard; rewritten to exercise the product.
+  (B) the index test pinned the index **name** (`index_list`) but not its **target column** — `ON runs(id)` passed; `PRAGMA index_info` assertion added.
+  (C) `test_list_runs_newest_first` could not distinguish `created_at DESC` from `id DESC` (its ids sort in insertion order, so both orderings satisfy the expectation) — added deterministic `test_list_runs_orders_by_created_at_not_id` with a **mocked clock** and reverse-sorted ids, so the three candidate orderings disagree without a microsecond race.
+  Count **39 → 40** (33 + 7). Re-verified from scratch: **210 passed + the same 1 pre-existing failure on both 3.11.9 and 3.12.14**, validator exit 0 both legs, tree clean except the one test edit, no pollution; **the §11.15 failure re-proven pre-existing on parent `4b03c55`** via a throwaway worktree (fails there too); mutation proof rerun under Session 21's harness rules (control green, which-test-id reported) — **9/9 killed, 0 survivors, no collection errors**, including MUT6→(B), MUT7/MUT9→(C), MUT8→(A) — each new/strengthened guard seen failing before it was trusted (Convention 7).
