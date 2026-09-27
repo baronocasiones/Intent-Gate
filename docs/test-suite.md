@@ -235,6 +235,16 @@ M3: **100 passed** on both legs, validator OK ×2 on both. **Still unverified
 on GitHub** — the branch has not been pushed, so no remote CI run has ever
 executed this workflow.
 
+**Step-ordering fact (Session 23, read from the workflow source):** the
+steps run install → `pytest` → validator, and GitHub Actions **skips
+subsequent steps after a failure**. So while §11.15 stands, `pytest` exits 1
+on **both** legs (`fail-fast: false` lets both run and both fail) and the
+validator step **never executes** — the green `OK 6/6` we prove locally will
+not appear in CI at all until the suite is red-no-more. Rehearsed locally
+for the M14 merge: merged tree = **211 items → 210 passed + the same §11.15
+failure** on both legs (the failure re-proven pre-existing on parent
+`4b03c55`).
+
 ## Session log (append-only)
 
 ### 2026-09-27 — Session 13: test suite scaffold + CI
