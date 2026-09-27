@@ -1,0 +1,21 @@
+{
+  "run_id": "demo",
+  "total": 2,
+  "completed": 1,
+  "workers": 3,
+  "current_activity": "Tracing error-path for AC-2 through src/refund.py",
+  "requirements": [
+    { "criterion_id": "AC-1", "state": "complete" },
+    { "criterion_id": "AC-2", "state": "checking" }
+  ],
+  "log": [
+    { "ts": "15:01:04", "msg": "Worker 1 started — assigned AC-1" },
+    { "ts": "15:01:05", "msg": "Worker 2 started — assigned AC-2" },
+    { "ts": "15:01:07", "msg": "Worker 1: CODE_SEARCH — located src/refund.py:64" },
+    { "ts": "15:01:09", "msg": "Worker 1: LOGIC_TRACE — approval gate confirmed at line 64" },
+    { "ts": "15:01:12", "msg": "Worker 1: STATE_CHECK — test_refund_requires_approval exercises the branch" },
+    { "ts": "15:01:14", "msg": "Worker 1: AC-1 verdict CERTIFIED at E4 — complete" },
+    { "ts": "15:01:15", "msg": "Worker 2: CODE_SEARCH — located src/refund.py:88" },
+    { "ts": "15:01:18", "msg": "Worker 2: ERROR_PATH — no retry path detected at line 88" }
+  ]
+}

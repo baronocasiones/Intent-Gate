@@ -1,0 +1,21 @@
+{
+  "run_id": "demo",
+  "status": "rejected",
+  "measured": false,
+  "verdicts": [
+    {
+      "criterion_id": "AC-1",
+      "verdict": "CERTIFIED",
+      "evidence_tier": "E4",
+      "locations": ["src/refund.py:64"],
+      "rationale": "Supervisor approval is enforced before capture: src/refund.py:64 returns 403 unless the request carries an approved supervisor id, and test_refund_requires_approval exercises that branch — removing the check fails the test, so the criterion is exercised rather than merely located."
+    },
+    {
+      "criterion_id": "AC-2",
+      "verdict": "REJECTED",
+      "evidence_tier": "E2",
+      "locations": ["src/refund.py:88"],
+      "rationale": "src/refund.py:88 returns the gateway error straight to the caller and nothing retries it, so the 3-retry requirement is refuted. Stopped at E2 — the location is tied to the criterion, but the absence claim has not had an adversarial pass."
+    }
+  ]
+}
